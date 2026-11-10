@@ -12,11 +12,12 @@
 // While nothing plays on the output Windows delivers nothing at all, not
 // silence: `read` then comes back with 0 after its wait.
 
+use std::marker::PhantomData;
 use std::sync::mpsc;
 use std::time::Duration;
 
 use windows::core::{implement, Interface, Ref, GUID, HRESULT};
-use windows::Win32::Foundation::{CloseHandle, E_FAIL, HANDLE};
+use windows::Win32::Foundation::{CloseHandle, E_FAIL, HANDLE, WAIT_FAILED};
 use windows::Win32::Media::Audio::{
     eConsole, eRender, ActivateAudioInterfaceAsync, IActivateAudioInterfaceAsyncOperation,
     IActivateAudioInterfaceCompletionHandler, IActivateAudioInterfaceCompletionHandler_Impl, IAudioCaptureClient,
@@ -54,6 +55,9 @@ pub struct Loopback {
     rate: u32,
     channels: u16,
     output: (u32, u16),
+    /// The capture reads on the thread that opened it, where COM was entered:
+    /// said here rather than left to whatever the fields happen to be.
+    _thread: PhantomData<*mut ()>,
     // Last: COM is left after the interfaces above are released.
     _com: Com,
 }
@@ -79,6 +83,9 @@ fn open(pid: Option<u32>, com: Com) -> WinResult<Loopback> {
         cbSize: 0,
     };
     unsafe {
+        // Made before the client, so that it is released after it: a client that
+        // fails to start must not have its event handle closed underneath it.
+        let event = Event(CreateEventW(None, false, false, None)?);
         let (client, rate, channels, output) = match pid {
             // A process has no format of its own: it is given ours or nothing.
             Some(pid) => {
@@ -105,11 +112,10 @@ fn open(pid: Option<u32>, com: Com) -> WinResult<Loopback> {
                 }
             }
         };
-        let event = Event(CreateEventW(None, false, false, None)?);
         client.SetEventHandle(event.0)?;
         let capture: IAudioCaptureClient = client.GetService()?;
         client.Start()?;
-        Ok(Loopback { client, capture, event, rate, channels, output, _com: com })
+        Ok(Loopback { client, capture, event, rate, channels, output, _thread: PhantomData, _com: com })
     }
 }
 
@@ -148,7 +154,10 @@ impl Loopback {
     pub fn read(&mut self, out: &mut Vec<f32>, wait: Duration) -> Result<usize, String> {
         let mut frames = self.drain(out).map_err(text)?;
         if frames == 0 {
-            unsafe { WaitForSingleObject(self.event.0, wait.as_millis().min(60_000) as u32) };
+            let waited = unsafe { WaitForSingleObject(self.event.0, millis(wait)) };
+            if waited == WAIT_FAILED {
+                return Err(text(windows::core::Error::from_win32()));
+            }
             frames = self.drain(out).map_err(text)?;
         }
         Ok(frames)
@@ -162,6 +171,9 @@ impl Loopback {
                 self.capture.GetBuffer(&mut data, &mut frames, &mut flags, None, None)?;
                 let (at, samples) = (out.len(), frames as usize * usize::from(self.channels));
                 out.resize(at + samples, 0.0);
+                // Safe by what `open` asked for and checked: 48 kHz stereo 32-bit float
+                // with conversion, or the output's own format when `is_float` passed, so
+                // a frame of the packet is exactly `channels` × 4 bytes.
                 if flags & BUFFERFLAGS_SILENT == 0 && !data.is_null() {
                     std::ptr::copy_nonoverlapping(data, out[at..].as_mut_ptr().cast::<u8>(), samples * 4);
                 }
@@ -196,10 +208,14 @@ impl Mix {
             let format = *self.0;
             let (tag, bits) = (format.wFormatTag, format.wBitsPerSample);
             let float = tag == WAVE_FORMAT_IEEE_FLOAT
-                || (tag == WAVE_FORMAT_EXTENSIBLE && {
-                    let sub = (*self.0.cast::<WAVEFORMATEXTENSIBLE>()).SubFormat;
-                    sub == SUBTYPE_IEEE_FLOAT
-                });
+                || (tag == WAVE_FORMAT_EXTENSIBLE
+                    // The subtype is past the base struct: only there when it is said to be.
+                    && format.cbSize >= 22
+                    && {
+                        // The extensible struct is packed: its field is read, never referenced.
+                        let ext = self.0.cast::<WAVEFORMATEXTENSIBLE>();
+                        std::ptr::addr_of!((*ext).SubFormat).read_unaligned() == SUBTYPE_IEEE_FLOAT
+                    });
             float && bits == 32
         }
     }
@@ -238,7 +254,10 @@ unsafe fn process_client(pid: u32) -> WinResult<IAudioClient> {
     let done: IActivateAudioInterfaceCompletionHandler = Activated(tx).into();
     let pending =
         unsafe { ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, &IAudioClient::IID, Some(&*how), &done)? };
-    if rx.recv_timeout(Duration::from_secs(5)).is_err() {
+    // Waited for without a limit: `how` points at `params` on this stack, and Windows
+    // may read them until the activation completes. A timeout here would return with
+    // that pointer dangling and leave the completion to dereference a dead frame.
+    if rx.recv().is_err() {
         return Err(windows::core::Error::new(E_FAIL, "the process's sound did not open"));
     }
     let (mut result, mut client) = (HRESULT(0), None);
@@ -254,5 +273,27 @@ impl IActivateAudioInterfaceCompletionHandler_Impl for Activated_Impl {
     fn ActivateCompleted(&self, _pending: Ref<'_, IActivateAudioInterfaceAsyncOperation>) -> WinResult<()> {
         let _ = self.0.send(());
         Ok(())
+    }
+}
+
+/// `wait` in whole milliseconds, rounded up so that a sub-millisecond wait is a wait
+/// and not a poll, and capped so that a caller cannot park this thread for minutes.
+fn millis(wait: Duration) -> u32 {
+    wait.as_micros().div_ceil(1000).min(60_000) as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_short_wait_is_not_a_poll() {
+        assert_eq!(millis(Duration::ZERO), 0, "no wait is a poll, and that is asked for");
+        assert_eq!(millis(Duration::from_micros(1)), 1);
+        assert_eq!(millis(Duration::from_micros(500)), 1);
+        assert_eq!(millis(Duration::from_millis(100)), 100);
+        assert_eq!(millis(Duration::from_micros(100_500)), 101, "rounded up, never down");
+        assert_eq!(millis(Duration::from_secs(30)), 30_000, "a real wait is kept");
+        assert_eq!(millis(Duration::from_secs(120)), 60_000, "capped");
     }
 }

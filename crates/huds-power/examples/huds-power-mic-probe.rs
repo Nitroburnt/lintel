@@ -1,5 +1,5 @@
 // Proves the microphone-in-use detector (src/mic.rs) without the app:
-// `cargo run -p notch-feat-huds-power --example huds-power-mic-probe -- other` (or `self`).
+// `cargo run -p notch-feat-huds-power --example huds-power-mic-probe -- other` (or `self`, or `kill`).
 //
 // A child process of its own opens the default microphone for three seconds while the watcher
 // runs here, and what the watcher reports is printed with the time: before, during and after.
@@ -9,6 +9,10 @@
 //          it must be announced, and let go when it ends.
 //   self   the child is this very program, as Lintel's own dictation is Lintel's:
 //          it must not be announced, though the registry shows it holding the microphone.
+//   kill   as other, but the child is killed while it still holds the microphone. Nothing
+//          writes LastUsedTimeStop then, and the registry keeps saying it records for good —
+//          which is why the detector follows the live sessions and not that record. The app
+//          must still be announced, and let go of, when the child dies.
 
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -49,13 +53,13 @@ fn main() {
     }
     let me = std::env::current_exe().expect("this program's path");
     let child = match mode.as_str() {
-        "other" => {
+        "other" | "kill" => {
             let copy = me.with_file_name("huds-power-mic-holder.exe");
             std::fs::copy(&me, &copy).expect("a copy of this program");
             copy
         }
         "self" => me.clone(),
-        _ => return println!("usage: huds-power-mic-probe other | self"),
+        _ => return println!("usage: huds-power-mic-probe other | self | kill"),
     };
 
     let start = Instant::now();
@@ -69,13 +73,22 @@ fn main() {
 
     println!("{} child starts ({mode}): {}", at(), child.display());
     let mut held = Command::new(&child).arg("--hold").spawn().expect("the child");
-    for _ in 0..2 {
+    if mode == "kill" {
+        // Killed while it still holds the microphone, with a second of its three gone.
         std::thread::sleep(Duration::from_secs(1));
-        read("during");
+        read("held");
+        let _ = held.kill();
+    } else {
+        for _ in 0..2 {
+            std::thread::sleep(Duration::from_secs(1));
+            read("during");
+        }
     }
     let ended = held.wait().map(|s| s.code());
     println!("{} child ended: {ended:?}", at());
-    std::thread::sleep(Duration::from_secs(1));
+    // The app is held over for its grace first, then let go (src/mic.rs: GRACE).
+    std::thread::sleep(mic::GRACE + Duration::from_secs(1));
+    // The registry view still holds the killed child (its stop stayed 0); the live reading must not.
     read("after");
 
     drop(watch);

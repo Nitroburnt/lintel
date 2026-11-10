@@ -441,7 +441,9 @@ impl Inner {
         let mut watch = self.watch.lock().unwrap();
         if on && watch.is_none() {
             let (cx, inner) = (cx.clone(), self.clone());
-            *watch = Some(svc_audio::on_sessions(move || cx.emit(ID, "apps", inner.apps())));
+            // The rows are the outputs: microphone sessions are no news to this page.
+            *watch =
+                Some(svc_audio::on_sessions(svc_audio::Scope::Render, move || cx.emit(ID, "apps", inner.apps())));
         } else if !on {
             let ended = watch.take();
             drop(watch);

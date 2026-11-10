@@ -161,8 +161,16 @@ fn sync_mic(cx: &Ctx, slot: &Mutex<Option<mic::Watch>>, settings: &Value) {
     if on && slot.is_none() {
         let cx = cx.clone();
         *slot = mic::watch(move |apps, camera| cx.emit(ID, "micUse", json!({ "apps": apps, "camera": camera })));
-    } else if !on && slot.take().is_some() {
-        cx.emit(ID, "micUse", json!({ "apps": Vec::<String>::new(), "camera": Vec::<String>::new() }));
+    } else if !on {
+        // A watcher joins its threads when it goes: never under this lock, which the
+        // `state` command takes to answer a page that is loading at the same time.
+        let ended = slot.take();
+        let was = ended.is_some();
+        drop(slot);
+        drop(ended);
+        if was {
+            cx.emit(ID, "micUse", json!({ "apps": Vec::<String>::new(), "camera": Vec::<String>::new() }));
+        }
     }
 }
 

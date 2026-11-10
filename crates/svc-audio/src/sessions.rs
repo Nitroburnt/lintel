@@ -1,19 +1,22 @@
-// Audio sessions (docs/ARCHITECTURE.md §8): what each app plays on an output,
-// with a level and a mute of its own — the rows of the Windows volume mixer.
+// Audio sessions (docs/ARCHITECTURE.md §8): what each app plays on an output
+// (and, for huds-power, records on a microphone), with a level and a mute of its
+// own — the rows of the Windows volume mixer.
 // Reads and writes are plain calls on the caller's thread. `on_sessions` is the
 // part that runs: one MTA thread of its own, from the first `SessionSub` to the
-// drop of the last, holding a session manager per active output and a listener
-// per session. COM calls back on its own threads; those only push a message to
-// that thread, which is where subscribers are called.
+// drop of the last, holding a session manager per active endpoint it was asked
+// to follow (outputs always; microphones when a subscriber wants them) and a
+// listener per session. COM calls back on its own threads; those only push a
+// message to that thread, which is where subscribers are called.
 
+use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use windows::core::{implement, Interface, Ref, BOOL, GUID, PCWSTR, PWSTR};
-use windows::Win32::Foundation::{CloseHandle, PROPERTYKEY, S_OK};
+use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_INSUFFICIENT_BUFFER, PROPERTYKEY, S_OK};
 use windows::Win32::Media::Audio::{
-    eRender, AudioSessionDisconnectReason, AudioSessionState, AudioSessionStateActive, AudioSessionStateExpired,
+    eCapture, eRender, AudioSessionDisconnectReason, AudioSessionState, AudioSessionStateActive, AudioSessionStateExpired,
     EDataFlow, ERole, IAudioSessionControl, IAudioSessionControl2, IAudioSessionEnumerator, IAudioSessionEvents,
     IAudioSessionEvents_Impl, IAudioSessionManager2, IAudioSessionNotification, IAudioSessionNotification_Impl,
     IMMDevice, IMMDeviceEnumerator, IMMNotificationClient, IMMNotificationClient_Impl, ISimpleAudioVolume,
@@ -61,7 +64,7 @@ pub fn sessions(device: Option<&str>) -> Result<Vec<Session>, String> {
     let _com = Com::enter();
     (|| {
         let mut out = Vec::new();
-        for (id, device) in outputs(&enumerator()?, device)? {
+        for (id, device) in outputs(&enumerator()?, eRender, device)? {
             // An output on its way out answers nothing: it has no sessions.
             let Ok((_, controls)) = manager(&device).and_then(|m| controls(&m)) else { continue };
             out.extend(controls.iter().filter_map(|control| read(control, &id)));
@@ -69,6 +72,53 @@ pub fn sessions(device: Option<&str>) -> Result<Vec<Session>, String> {
         Ok(out)
     })()
     .map_err(text)
+}
+
+/// The executables of the processes with a capture stream running on any active
+/// microphone right now, sorted and without repeats: the live state behind the
+/// Windows microphone icon, and what huds-power's privacy indicator follows.
+/// (The ConsentStore registry is usage history, not this: it is not written when
+/// a process holding the microphone is killed, so a reading from it can never
+/// clear again.)
+pub fn capture_in_use() -> Result<Vec<Capture>, String> {
+    let _com = Com::enter();
+    (|| {
+        let mut out: Vec<Capture> = Vec::new();
+        for (_, device) in outputs(&enumerator()?, eCapture, None)? {
+            let Ok((_, controls)) = manager(&device).and_then(|m| controls(&m)) else { continue };
+            for control in &controls {
+                // A stream that is merely open is not in use; one that is running is.
+                if unsafe { control.GetState() }.ok() != Some(AudioSessionStateActive) {
+                    continue;
+                }
+                let Some((pid, _)) = whose(control) else { continue };
+                if pid == 0 {
+                    continue;
+                }
+                out.push(Capture { pid, exe: process_path(pid) });
+            }
+        }
+        Ok(coalesce(out))
+    })()
+    .map_err(text)
+}
+
+/// One process with a capture stream running on an active microphone right now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Capture {
+    /// The process holding the microphone.
+    pub pid: u32,
+    /// Its executable as a full path, or `None` for a process this one may not ask:
+    /// an elevated or protected one. That process is still reported, because a
+    /// privacy indicator that hides the apps it cannot open hides the wrong ones.
+    pub exe: Option<String>,
+}
+
+/// One row per process: an app recording on two microphones is still one app.
+fn coalesce(mut list: Vec<Capture>) -> Vec<Capture> {
+    list.sort_by(|a, b| a.pid.cmp(&b.pid).then_with(|| a.exe.cmp(&b.exe)));
+    list.dedup_by(|a, b| a.pid == b.pid);
+    list
 }
 
 /// Sets the level (0…1) of every session of the processes `pids`, on every
@@ -82,17 +132,28 @@ pub fn set_session_mute(pids: &[u32], mute: bool) -> Result<(), String> {
     write(pids, |level| unsafe { level.SetMute(mute, &OWN) })
 }
 
-/// The executable of a running process as a full path. None for a process
-/// that has ended or may not be asked (a protected one).
+/// The executable of a running process as a full path. None for a process that
+/// has ended or may not be asked: a protected one, or an elevated one when Lintel
+/// is not — `capture_in_use` reports those by pid instead.
 pub fn process_path(pid: u32) -> Option<String> {
     unsafe {
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-        let mut buf = [0u16; 1024];
-        let mut len = buf.len() as u32;
-        let read = QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len);
+        // A path too long for the buffer is not a failure to report: the call says
+        // how it failed, so the buffer doubles until it fits.
+        let mut buf = vec![0u16; 512];
+        let path = loop {
+            let mut len = buf.len() as u32;
+            let read = QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len);
+            if read.is_ok() {
+                break Some(String::from_utf16_lossy(&buf[..len as usize]));
+            }
+            if GetLastError() != ERROR_INSUFFICIENT_BUFFER || buf.len() >= 32 * 1024 {
+                break None;
+            }
+            buf.resize(buf.len() * 2, 0);
+        };
         let _ = CloseHandle(process);
-        read.ok()?;
-        Some(String::from_utf16_lossy(&buf[..len as usize]))
+        path
     }
 }
 
@@ -100,7 +161,7 @@ fn write(pids: &[u32], set: impl Fn(&ISimpleAudioVolume) -> WinResult<()>) -> Re
     let _com = Com::enter();
     (|| {
         let mut done = Ok(());
-        for (_, device) in outputs(&enumerator()?, None)? {
+        for (_, device) in outputs(&enumerator()?, eRender, None)? {
             let Ok((_, controls)) = manager(&device).and_then(|m| controls(&m)) else { continue };
             for control in &controls {
                 if !whose(control).is_some_and(|(pid, _)| pids.contains(&pid)) {
@@ -117,10 +178,10 @@ fn write(pids: &[u32], set: impl Fn(&ISimpleAudioVolume) -> WinResult<()>) -> Re
     .map_err(text)
 }
 
-/// The active outputs with their ids; `only` keeps the one with that id.
-fn outputs(enumerator: &IMMDeviceEnumerator, only: Option<&str>) -> WinResult<Vec<(String, IMMDevice)>> {
+/// The active endpoints of `flow`, with their ids; `only` keeps the one with that id.
+fn outputs(enumerator: &IMMDeviceEnumerator, flow: EDataFlow, only: Option<&str>) -> WinResult<Vec<(String, IMMDevice)>> {
     unsafe {
-        let list = enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)?;
+        let list = enumerator.EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE)?;
         let mut out = Vec::new();
         for i in 0..list.GetCount()? {
             let device = list.Item(i)?;
@@ -194,6 +255,16 @@ unsafe fn taken(raw: WinResult<PWSTR>) -> String {
 
 // ── Subscribing ───────────────────────────────────────────────────────────────
 
+/// What a subscriber wants to hear about. The mixer shows the outputs only, so a
+/// microphone session that starts (a dictation, a call) must not wake it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// The outputs: what each app plays.
+    Render,
+    /// The outputs and the microphones: also what each app records.
+    All,
+}
+
 /// A live subscription to the sessions. Dropping it unsubscribes; dropping the
 /// last one ends the sessions thread and unregisters every listener.
 #[must_use = "dropping the handle unsubscribes"]
@@ -201,13 +272,18 @@ pub struct SessionSub(u64);
 
 /// Called on the sessions thread when a session came, went, started or stopped
 /// playing, or had its level or mute changed by someone else (our own writes
-/// are not told): read `sessions` again. At most once per 200 ms. Keep it short.
-pub fn on_sessions(f: impl Fn() + Send + Sync + 'static) -> SessionSub {
+/// are not told): read `sessions` again. At most once per 200 ms. Keep it short:
+/// a panic in it is contained, not propagated.
+pub fn on_sessions(scope: Scope, f: impl Fn() + Send + Sync + 'static) -> SessionSub {
     let mut hub = HUB.lock().unwrap();
     hub.next += 1;
     let id = hub.next;
-    hub.subs.push((id, Arc::new(f)));
-    if hub.thread.is_none() {
+    hub.subs.push((id, scope, Arc::new(f)));
+    WANT_CAPTURE.store(wants_capture(&hub.subs), Relaxed);
+    if crate::needs_thread(&hub.thread) {
+        // Nothing was started yet, or the thread that was there has ended: without
+        // this the hub would be quiet for the rest of the run.
+        let _ = hub.thread.take();
         let (tx, rx) = mpsc::channel();
         let callbacks = tx.clone();
         hub.thread = Some((tx, std::thread::spawn(move || run(rx, callbacks))));
@@ -215,19 +291,34 @@ pub fn on_sessions(f: impl Fn() + Send + Sync + 'static) -> SessionSub {
     SessionSub(id)
 }
 
+/// Whether any subscriber wants the microphones too. They are listened to only
+/// then: the listeners are COM objects per endpoint and per session.
+fn wants_capture(subs: &[(u64, Scope, Handler)]) -> bool {
+    subs.iter().any(|s| s.1 == Scope::All)
+}
+
 impl Drop for SessionSub {
     fn drop(&mut self) {
         let ended = {
             let mut hub = HUB.lock().unwrap();
             hub.subs.retain(|s| s.0 != self.0);
-            if hub.subs.is_empty() { hub.thread.take() } else { None }
+            WANT_CAPTURE.store(wants_capture(&hub.subs), Relaxed);
+            if !hub.subs.is_empty() {
+                return;
+            }
+            let Some(thread) = hub.thread.as_mut() else { return };
+            let _ = thread.0.send(Msg::Stop);
+            // Dropped from inside a callback: this thread ends on its own, and its
+            // handle has to stay, or the next subscriber would start a second thread
+            // beside one that has not stopped yet.
+            if thread.1.thread().id() == std::thread::current().id() {
+                return;
+            }
+            hub.thread.take()
         };
-        let Some((tx, handle)) = ended else { return };
-        let _ = tx.send(Msg::Stop);
-        // Dropped from inside a callback: the thread is this one and ends on its own.
-        if handle.thread().id() != std::thread::current().id() {
-            let _ = handle.join();
-        }
+        let Some((_, handle)) = ended else { return };
+        // Outside the lock: a join waits for a callback, which may want this hub.
+        let _ = handle.join();
     }
 }
 
@@ -235,17 +326,21 @@ type Handler = Arc<dyn Fn() + Send + Sync>;
 
 struct Hub {
     next: u64,
-    subs: Vec<(u64, Handler)>,
+    subs: Vec<(u64, Scope, Handler)>,
     thread: Option<(mpsc::Sender<Msg>, JoinHandle<()>)>,
 }
 
 static HUB: Mutex<Hub> = Mutex::new(Hub { next: 0, subs: Vec::new(), thread: None });
 
+/// Whether any live subscriber asked for the microphones too; read by the thread
+/// when it (re)binds.
+static WANT_CAPTURE: AtomicBool = AtomicBool::new(false);
+
 fn emit() {
     // Copied out first: a callback may subscribe or drop a `SessionSub`.
-    let subs: Vec<Handler> = HUB.lock().unwrap().subs.iter().map(|s| s.1.clone()).collect();
+    let subs: Vec<Handler> = HUB.lock().unwrap().subs.iter().map(|s| s.2.clone()).collect();
     for f in subs {
-        f();
+        crate::guard(move || f());
     }
 }
 
@@ -278,7 +373,7 @@ fn run(rx: mpsc::Receiver<Msg>, tx: mpsc::Sender<Msg>) {
     unsafe {
         let _ = enumerator.RegisterEndpointNotificationCallback(&devices);
     }
-    let mut bound = bind(&enumerator, &tx);
+    let mut bound = bind(&enumerator, &tx, WANT_CAPTURE.load(Relaxed));
     'life: while let Ok(first) = rx.recv() {
         let until = Instant::now() + SETTLE;
         let mut rebind = false;
@@ -296,7 +391,7 @@ fn run(rx: mpsc::Receiver<Msg>, tx: mpsc::Sender<Msg>) {
         }
         if rebind {
             unbind(std::mem::take(&mut bound));
-            bound = bind(&enumerator, &tx);
+            bound = bind(&enumerator, &tx, WANT_CAPTURE.load(Relaxed));
         }
         emit();
     }
@@ -306,14 +401,24 @@ fn run(rx: mpsc::Receiver<Msg>, tx: mpsc::Sender<Msg>) {
     }
 }
 
-/// Listens to every active output for new sessions, and to every session.
-fn bind(enumerator: &IMMDeviceEnumerator, tx: &mpsc::Sender<Msg>) -> Vec<Bound> {
+/// Listens for new sessions on every endpoint the subscribers asked for, and to
+/// every session on it.
+fn bind(enumerator: &IMMDeviceEnumerator, tx: &mpsc::Sender<Msg>, capture: bool) -> Vec<Bound> {
     let mut out = Vec::new();
-    for (_, device) in outputs(enumerator, None).unwrap_or_default() {
+    // Every output, and every microphone when a subscriber asked for them: an app
+    // recording is a session on a capture endpoint, and it is that half which tells
+    // huds-power who holds the microphone. The mixer reads the outputs only.
+    let flows: &[EDataFlow] = if capture { &[eRender, eCapture] } else { &[eRender] };
+    let both = flows
+        .iter()
+        .flat_map(|flow| outputs(enumerator, *flow, None).unwrap_or_default())
+        .collect::<Vec<_>>();
+    for (_, device) in both {
         let Ok(manager) = manager(&device) else { continue };
         let created: IAudioSessionNotification = Events(tx.clone()).into();
         unsafe {
             // Registered before the sessions are counted, as Windows wants it.
+            // debt: a refusal here means new sessions are never told; no logger here to say it.
             let _ = manager.RegisterSessionNotification(&created);
             let Ok((list, controls)) = controls(&manager) else {
                 let _ = manager.UnregisterSessionNotification(&created);
@@ -341,6 +446,39 @@ fn unbind(bound: Vec<Bound>) {
             }
             let _ = output.manager.UnregisterSessionNotification(&output.created);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_row_per_process() {
+        let list = vec![
+            Capture { pid: 9, exe: Some("b.exe".into()) },
+            Capture { pid: 4, exe: None },
+            Capture { pid: 9, exe: Some("b.exe".into()) },
+        ];
+        assert_eq!(
+            coalesce(list),
+            vec![Capture { pid: 4, exe: None }, Capture { pid: 9, exe: Some("b.exe".into()) }]
+        );
+    }
+
+    #[test]
+    fn the_current_process_has_a_path() {
+        let path = process_path(std::process::id()).expect("a process can be asked about itself");
+        assert!(path.to_ascii_lowercase().ends_with(".exe"), "{path}");
+    }
+
+    #[test]
+    fn only_a_subscriber_that_asked_gets_the_microphones() {
+        let handler: Handler = Arc::new(|| {});
+        let render = [(1, Scope::Render, handler.clone())];
+        assert!(!wants_capture(&render), "the mixer alone must not open capture endpoints");
+        let both = [(1, Scope::Render, handler.clone()), (2, Scope::All, handler)];
+        assert!(wants_capture(&both));
     }
 }
 

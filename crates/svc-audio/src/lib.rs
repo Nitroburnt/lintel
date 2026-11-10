@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use windows::core::{implement, interface, IUnknown, IUnknown_Vtbl, GUID, HRESULT, PCWSTR};
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
-use windows::Win32::Foundation::PROPERTYKEY;
+use windows::Win32::Foundation::{E_FAIL, PROPERTYKEY};
 use windows::Win32::Media::Audio::Endpoints::{
     IAudioEndpointVolume, IAudioEndpointVolumeCallback, IAudioEndpointVolumeCallback_Impl,
 };
@@ -34,7 +34,10 @@ use windows::Win32::System::Com::{
 type WinResult<T> = windows::core::Result<T>;
 
 mod sessions;
-pub use sessions::{on_sessions, process_path, sessions, set_session_mute, set_session_volume, Session, SessionSub};
+pub use sessions::{
+    capture_in_use, on_sessions, process_path, sessions, set_session_mute, set_session_volume, Capture, Scope, Session,
+    SessionSub,
+};
 
 mod loopback;
 pub use loopback::{loopback, Loopback};
@@ -118,12 +121,45 @@ pub fn endpoint_volume(flow: Flow) -> Result<Volume, String> {
 const SILENT: f32 = 0.005;
 
 /// Output writes asked for and not yet applied, newest per device.
+#[derive(Default)]
 struct Writes {
     busy: bool,
     queue: Vec<(String, f32)>,
 }
 
+impl Writes {
+    /// Queues the write and says whether this caller has to apply the queue: the
+    /// caller that finds it idle owns it until it is empty again.
+    fn push(&mut self, id: String, scalar: f32) -> bool {
+        self.queue.retain(|q| q.0 != id);
+        self.queue.push((id, scalar));
+        !std::mem::replace(&mut self.busy, true)
+    }
+
+    /// The next write to apply, or `None` once the queue is empty: the caller that
+    /// gets it hands the queue back, so the next write is applied by its own caller.
+    fn next(&mut self) -> Option<(String, f32)> {
+        if self.queue.is_empty() {
+            self.busy = false;
+            return None;
+        }
+        Some(self.queue.remove(0))
+    }
+}
+
 static WRITES: Mutex<Writes> = Mutex::new(Writes { busy: false, queue: Vec::new() });
+
+/// Hands the queue back even if the call that drains it unwinds: a `busy` flag left
+/// set would queue every later output write and never apply one.
+struct Owner;
+
+impl Drop for Owner {
+    fn drop(&mut self) {
+        if let Ok(mut w) = WRITES.lock() {
+            w.busy = false;
+        }
+    }
+}
 
 /// Sets the level (0…1) of the default device of `flow`. For an output, a level
 /// that reads 0 % also mutes it and a higher one opens it; the write goes to the
@@ -136,27 +172,24 @@ pub fn set_volume(flow: Flow, scalar: f32) -> Result<(), String> {
         return (|| unsafe { default_endpoint(&enumerator()?, flow)?.SetMasterVolumeLevelScalar(scalar, &OWN) })().map_err(text);
     }
     let id = (|| unsafe { device_id(&enumerator()?.GetDefaultAudioEndpoint(eRender, eConsole)?) })().map_err(text)?;
-    {
-        let mut w = WRITES.lock().unwrap();
-        w.queue.retain(|q| q.0 != id);
-        w.queue.push((id, scalar));
-        // Another call is applying writes: it will take this one too.
-        if std::mem::replace(&mut w.busy, true) {
-            return Ok(());
+    let mine = scalar;
+    // Another call is applying writes: it will take this one too, and its outcome is
+    // not this caller's to report.
+    if !WRITES.lock().unwrap().push(id.clone(), scalar) {
+        return Ok(());
+    }
+    let _owner = Owner;
+    // Only this device's own refusal is this caller's news: the rest of the queue is
+    // other callers' work, and a device that refuses does not stop the others.
+    let mut refused: Option<String> = None;
+    while let Some((next, scalar)) = WRITES.lock().unwrap().next() {
+        if let Err(err) = apply_level(&next, scalar) {
+            if next == id && scalar == mine {
+                refused = Some(err);
+            }
         }
     }
-    let mut result = Ok(());
-    loop {
-        let next = {
-            let mut w = WRITES.lock().unwrap();
-            if w.queue.is_empty() {
-                w.busy = false;
-                return result;
-            }
-            w.queue.remove(0)
-        };
-        result = apply_level(&next.0, next.1);
-    }
+    refused.map_or(Ok(()), Err)
 }
 
 /// Mute first when going silent, open last when coming back: never a blip.
@@ -292,8 +325,14 @@ fn endpoint_of(enumerator: &IMMDeviceEnumerator, id: &str) -> WinResult<IAudioEn
 fn device_id(device: &IMMDevice) -> WinResult<String> {
     unsafe {
         let raw = device.GetId()?;
-        let id = raw.to_string().unwrap_or_default();
+        let id = raw.to_string();
         CoTaskMemFree(Some(raw.0 as *const _));
+        // An id that is empty or unreadable addresses nothing: say so here rather
+        // than three calls later, where the device looks merely absent.
+        let id = id?;
+        if id.is_empty() {
+            return Err(windows::core::Error::new(E_FAIL, "the device has no id"));
+        }
         Ok(id)
     }
 }
@@ -337,7 +376,11 @@ pub fn on_endpoint_change(f: impl Fn(&Change) + Send + Sync + 'static) -> Sub {
     hub.next += 1;
     let id = hub.next;
     hub.subs.push((id, Arc::new(f)));
-    if hub.thread.is_none() {
+    if needs_thread(&hub.thread) {
+        // Nothing was started yet, or the thread that was there has ended: without
+        // this the hub would be quiet for the rest of the run, with subscribers that
+        // look healthy.
+        let _ = hub.thread.take();
         let (tx, rx) = mpsc::channel();
         let callbacks = tx.clone();
         hub.thread = Some((tx, std::thread::spawn(move || run(rx, callbacks))));
@@ -350,14 +393,22 @@ impl Drop for Sub {
         let ended = {
             let mut hub = HUB.lock().unwrap();
             hub.subs.retain(|s| s.0 != self.0);
-            if hub.subs.is_empty() { hub.thread.take() } else { None }
+            if !hub.subs.is_empty() {
+                return;
+            }
+            let Some(thread) = hub.thread.as_mut() else { return };
+            let _ = thread.0.send(Msg::Stop);
+            // Dropped from inside a callback: this thread ends on its own, and its
+            // handle has to stay, or the next subscriber would start a second thread
+            // beside one that has not stopped yet.
+            if thread.1.thread().id() == std::thread::current().id() {
+                return;
+            }
+            hub.thread.take()
         };
-        let Some((tx, handle)) = ended else { return };
-        let _ = tx.send(Msg::Stop);
-        // Dropped from inside a callback: the thread is this one and ends on its own.
-        if handle.thread().id() != std::thread::current().id() {
-            let _ = handle.join();
-        }
+        let Some((_, handle)) = ended else { return };
+        // Outside the lock: a join waits for a callback, which may want this hub.
+        let _ = handle.join();
     }
 }
 
@@ -375,8 +426,22 @@ fn emit(change: Change) {
     // Copied out first: a callback may subscribe or drop a `Sub`.
     let subs: Vec<Handler> = HUB.lock().unwrap().subs.iter().map(|s| s.1.clone()).collect();
     for f in subs {
-        f(&change);
+        guard(|| f(&change));
     }
+}
+
+/// Runs one subscriber so that a panic in it cannot take the hub thread with it.
+pub(crate) fn guard(f: impl FnOnce()) {
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err() {
+        // debt: this crate has no logger (notch-core would pull the app in), so a
+        // subscriber that throws is only visible as a HUD that stopped moving.
+        eprintln!("lintel: an audio subscriber panicked");
+    }
+}
+
+/// Whether the hub needs a thread: one was never started, or the one there ended.
+pub(crate) fn needs_thread<T>(thread: &Option<(mpsc::Sender<T>, JoinHandle<()>)>) -> bool {
+    thread.as_ref().is_none_or(|(_, handle)| handle.is_finished())
 }
 
 // ── The audio thread ──────────────────────────────────────────────────────────
@@ -397,6 +462,8 @@ fn run(rx: mpsc::Receiver<Msg>, tx: mpsc::Sender<Msg>) {
     let Ok(enumerator) = enumerator() else { return };
     let devices: IMMNotificationClient = DeviceEvents(tx.clone()).into();
     unsafe {
+        // debt: a refusal here means no device changes ever, and this crate has no logger
+        // to say so; the hub's restart path is the only recovery.
         let _ = enumerator.RegisterEndpointNotificationCallback(&devices);
     }
     let bind_all = || [Flow::Render, Flow::Capture].map(|flow| bind(&enumerator, flow, &tx));
@@ -435,6 +502,7 @@ fn run(rx: mpsc::Receiver<Msg>, tx: mpsc::Sender<Msg>) {
 fn bind(enumerator: &IMMDeviceEnumerator, flow: Flow, tx: &mpsc::Sender<Msg>) -> Bound {
     let endpoint = default_endpoint(enumerator, flow).ok()?;
     let callback: IAudioEndpointVolumeCallback = VolumeEvents { flow, tx: tx.clone() }.into();
+    // debt: a refusal here means this flow's levels are never told, with nothing said about it.
     unsafe { endpoint.RegisterControlChangeNotify(&callback).ok()? };
     Some((endpoint, callback))
 }
@@ -444,6 +512,61 @@ fn unbind(bound: [Bound; 2]) {
         unsafe {
             let _ = endpoint.UnregisterControlChangeNotify(&callback);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_queue_collapses_to_the_newest_write_per_device() {
+        let mut w = Writes::default();
+        assert!(w.push("a".into(), 0.2));
+        assert!(!w.push("a".into(), 0.9));
+        assert_eq!(w.next(), Some(("a".into(), 0.9)));
+        assert_eq!(w.next(), None);
+    }
+
+    #[test]
+    fn the_caller_that_finds_the_queue_idle_owns_it_and_hands_it_back() {
+        let mut w = Writes::default();
+        assert!(w.push("a".into(), 0.5), "the first write is applied by its caller");
+        assert!(!w.push("b".into(), 0.7), "the second waits for the first caller");
+        assert_eq!(w.next(), Some(("a".into(), 0.5)));
+        assert_eq!(w.next(), Some(("b".into(), 0.7)));
+        assert_eq!(w.next(), None);
+        assert!(!w.busy, "the queue is free for the next caller");
+        assert!(w.push("c".into(), 1.0), "and is taken by it");
+    }
+
+    #[test]
+    fn a_panicking_subscriber_does_not_stop_the_hub() {
+        let was = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        guard(|| panic!("a subscriber that throws"));
+        std::panic::set_hook(was);
+        let mut after = false;
+        guard(|| after = true);
+        assert!(after, "the next subscriber still runs");
+    }
+
+    #[test]
+    fn a_ended_thread_is_replaced_and_a_live_one_is_kept() {
+        let none: Option<(mpsc::Sender<Msg>, JoinHandle<()>)> = None;
+        assert!(needs_thread(&none), "a hub that never started needs a thread");
+
+        let live = std::thread::spawn(|| std::thread::sleep(Duration::from_millis(50)));
+        let (tx, _rx) = mpsc::channel::<Msg>();
+        assert!(!needs_thread(&Some((tx, live))), "a running thread is kept");
+
+        // A thread that has returned, without joining it: joining consumes the handle.
+        let ended = std::thread::spawn(|| {});
+        while !ended.is_finished() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let (tx, _rx) = mpsc::channel::<Msg>();
+        assert!(needs_thread(&Some((tx, ended))), "a thread that returned is replaced");
     }
 }
 

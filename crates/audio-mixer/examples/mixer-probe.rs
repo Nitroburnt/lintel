@@ -91,7 +91,7 @@ fn main() {
     rows(&mut known.lock().unwrap()).iter().for_each(|row| println!("  {row}"));
 
     let start = Instant::now();
-    let sessions = svc_audio::on_sessions(move || {
+    let sessions = svc_audio::on_sessions(svc_audio::Scope::All, move || {
         println!("{:5.1}s sessions changed:", start.elapsed().as_secs_f32());
         rows(&mut known.lock().unwrap()).iter().for_each(|row| println!("        {row}"));
     });
