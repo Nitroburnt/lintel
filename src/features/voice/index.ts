@@ -18,7 +18,7 @@ import "./style.css";
 import { Bridge } from "../../core/bridge";
 import { defineFeature, type FeatureCtx } from "../../core/feature";
 import { pillDefinition } from "../../core/pills";
-import { featureCtx, featureOn } from "../../core/registry";
+import { featureCtx, featureOn, loadAllStrings } from "../../core/registry";
 import { State } from "../../core/state";
 import { stateAbout } from "./answers/index";
 import { startChatAloud } from "./brain/claude";
@@ -280,6 +280,9 @@ export default defineFeature({
   windows: { capsule: capsulePage },
   voice: () => import("./base-actions"),
   start: (cx) => {
+    // Said to it, a feature that is off is still named: its strings are read here,
+    // where the island otherwise reads only those of the features that run.
+    void loadAllStrings();
     const stops = [
       // The action model gets its tools after each read of the registry, the first one included.
       onRegistry((list) => void pushTools(cx, list, cxOf)),

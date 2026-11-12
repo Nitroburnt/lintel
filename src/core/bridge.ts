@@ -69,6 +69,8 @@ export const Bridge = {
   featureAction: (feature: string, id: string) => call<void>("feature_action", { feature, id }),
 
   reposition: () => call<void>("reposition"),
+  /** The frame loop stalled: asks Rust to make the WebView2 window present a fresh surface. */
+  islandRepaint: () => call<void>("island_repaint"),
   fitZoom: (dpr: number) => call<boolean>("fit_zoom", { dpr }),
 
   /** Every display, for the placement rules of a dragged island (src/island/place.ts). */

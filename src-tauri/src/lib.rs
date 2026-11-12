@@ -195,6 +195,12 @@ fn set_collapsed(app: AppHandle, shared: State<Shared>, collapsed: bool) {
             platform::give_keyboard_back(&win);
         }
     }
+    // A shrunk island is out of the way: WebView2 may hold its page to less and
+    // collect it sooner, and open again it is normal. A thread of its own,
+    // because `with_webview` waits for the main thread (island::recover says why).
+    if let Some(win) = island::window(&app) {
+        std::thread::spawn(move || crate::winfactory::web_memory(&win, collapsed));
+    }
 }
 
 /// A tool of the island's Utilities page: the shortcut action of a running
@@ -300,6 +306,14 @@ fn island_place(app: AppHandle, shared: State<Shared>, place: Option<island::Pla
     let pref = shared.settings.lock().unwrap().screen.clone();
     island::apply_geometry(&app, &pref, shared.gate.collapsed.load(Ordering::Relaxed));
     island::refresh_click_through(&app, &shared.gate);
+}
+
+/// The page saw its frame loop stall (Chromium stopped delivering frames): ask for
+/// a fresh surface as well as restarting the loop. Async, so `with_webview` does not
+/// wait on the web view's own IPC callback.
+#[tauri::command]
+async fn island_repaint(app: AppHandle) {
+    island::recover(&app, "the page asking for a frame");
 }
 
 /// A press on the strip or the header has become a drag: the cursor poll
@@ -861,6 +875,7 @@ pub fn run() {
             set_island_rect,
             island_displays,
             island_place,
+            island_repaint,
             island_drag,
             focus_window,
             set_island_keys,
@@ -946,7 +961,8 @@ pub fn run() {
                 log::line(what);
             }
             watchdog::start();
-            winfactory::create_settings(&handle);
+            // No settings window at launch: it is built when Settings is first
+            // asked for and closed for good after that (winfactory::create_settings).
             // The Run entry names the exe it was written for: a moved or reinstalled app is
             // written again with the path it runs from now.
             if loaded.autostart {

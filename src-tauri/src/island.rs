@@ -437,6 +437,52 @@ pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: bool) {
     let _ = win.set_always_on_top(true);
 }
 
+/// Brings the island back after a wake or a display change. A window the shell
+/// minimized never paints; a WebView2 surface lost when the display went off
+/// stays blank while the page keeps running (hover sounds, no pixels). The
+/// window is unminimized and shown without focus, topmost is put back, and the
+/// web view is hidden and shown again so it presents through a new surface.
+///
+/// Called from the cursor poll, which is not the main thread: `with_webview`
+/// waits for the main thread, and a command already runs there.
+pub fn recover(app: &AppHandle, why: &str) -> bool {
+    crate::log::line(format!("island recover requested: {why}"));
+    let Some(win) = window(app) else { return false };
+    let minimized = win.is_minimized().unwrap_or(false);
+    let visible = win.is_visible().unwrap_or(true);
+    if minimized {
+        let _ = win.unminimize();
+    }
+    if minimized || !visible {
+        platform::show_inactive(&win);
+    }
+    let _ = win.set_always_on_top(true);
+    let hid = crate::winfactory::web_visible(&win, false);
+    std::thread::sleep(Duration::from_millis(16));
+    let shown = crate::winfactory::web_visible(&win, true);
+    let restored = hid && shown;
+    let how = if restored { "restored" } else { "restore failed" };
+    crate::log::line(format!(
+        "island {how} after {why} (minimized: {minimized}, visible: {visible}, re-presented: {hid}/{shown})"
+    ));
+    restored
+}
+
+/// The same recovery again a moment later: DWM may still be bringing the desktop
+/// back when a display wakes, and a surface presented then is lost.
+fn recover_later(app: &AppHandle, why: &'static str) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(2));
+        recover(&app, why);
+    });
+}
+
+pub fn recover_soon(app: &AppHandle, why: &'static str) {
+    recover(app, why);
+    recover_later(app, why);
+}
+
 /// The zoom that makes one CSS pixel one window pixel again, when the web view's
 /// pixel ratio differs from the window's scale (mixed-scale displays, text
 /// scaling): the open island would otherwise be cut off. None = nothing to do.
@@ -525,8 +571,11 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
                         last_screen = now;
                         if !first {
                             crate::log::line("display layout changed — repositioning".to_string());
+                            recover_soon(&app, "a display change");
                             let _ = app.emit_to(WINDOW_LABEL, "screen-changed", ());
                         }
+                    } else if window(&app).is_some_and(|win| win.is_minimized().unwrap_or(false)) {
+                        recover(&app, "the window being minimized");
                     }
                 }
 
@@ -537,8 +586,16 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
                 // has the desktop. Said again about twice a second while it lasts,
                 // so an open island that folds meanwhile is put away too.
                 // debt: svc-sysevents has the events themselves; the host does not link it.
+                if let Ok(gap) = woke.elapsed() {
+                    if gap > Duration::from_secs(2) {
+                        crate::log::line(format!("cursor poll gap {:.1}s", gap.as_secs_f64()));
+                    }
+                }
                 let slept = woke.elapsed().is_ok_and(|gap| gap > Duration::from_secs(5));
                 woke = SystemTime::now();
+                if slept && !recover(&app, "the computer waking") {
+                    recover_later(&app, "the computer waking");
+                }
                 let cursor = cursor_physical();
                 if slept || (cursor.is_none() && blind % 32 == 0) {
                     let _ = app.emit_to(WINDOW_LABEL, "away", ());

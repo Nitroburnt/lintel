@@ -13,7 +13,7 @@ import "./style.css";
 import { emit } from "@tauri-apps/api/event";
 import { Bridge, onEvent } from "../../core/bridge";
 import { defineFeature, type FeatureCtx } from "../../core/feature";
-import { FEATURES, featureCtx, featureInfos, featureOn, loadFeatures } from "../../core/registry";
+import { FEATURES, featureCtx, featureInfos, featureOn, loadAllStrings, loadFeatures } from "../../core/registry";
 import { displayKeys, type Bindings } from "../../core/shortcuts";
 import type { Settings } from "../../core/state";
 import { btn, card, field, iconBtn, kbd, row, tab, toggle } from "../../ui/components";
@@ -503,6 +503,9 @@ function mountBar(root: HTMLElement, cx: FeatureCtx) {
     void refresh();
     folders = String((await cx.settings.get()).fileFolders ?? "");
     await loadFeatures();
+    // Every feature has a Settings page and a switch here, so their names must
+    // translate whether they run or not: the island reads only the running ones.
+    await loadAllStrings();
     runners.clear();
     offered = [];
     found = [];

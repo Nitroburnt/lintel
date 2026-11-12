@@ -59,6 +59,8 @@ const STRIP_IN_MS = 200 + 180 + 20;
 const WAKE_DELAY_MS = 50;
 /** Between two frames while the strip rests (§4): the mascot still breathes, about fourteen times a second instead of sixty. */
 const REST_FRAME_MS = 66;
+/** No frame for this long while the loop says it is running: Chromium has stopped it (a minimized or occluded window, a display just back on), and it is started again. */
+const FRAME_STALL_MS = 2000;
 
 /** How much a card grows under the pointer (Settings › Island "Enlarge cards on hover"), and in how long: `scale(1.02)` and --d-fast in style.css. */
 const HOVER_GROW = 1.02;
@@ -183,6 +185,10 @@ export class Island {
 
   private running = false;
   private lastFrame = 0;
+  /** Incremented when the loop is started again: a callback from the loop before it must not keep a second one going. */
+  private frameToken = 0;
+  /** Said once in the log per stall, not every time the watchdog starts the loop again. */
+  private frameStalled = false;
   private dirty = true;
   /**
    * The strip rests: the setting keeps it out, the pointer is away and nothing
@@ -299,6 +305,13 @@ export class Island {
       this.onGreetingDone?.();
     };
     State.subscribe(() => this.invalidate());
+    // Chromium stops delivering frames to a window that is minimized or occluded, and does
+    // not always resume by itself: the island is drawn the moment it can be again.
+    window.setInterval(() => this.nudgeFrames(), FRAME_STALL_MS);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") this.resumeFrames();
+    });
+    window.addEventListener("pageshow", () => this.resumeFrames());
     onFeaturesChanged(() => this.featuresChanged());
     // The base views relabel themselves; a feature's section is built again in the new language.
     onLanguageChange(() => {
@@ -1703,19 +1716,47 @@ export class Island {
     // Something changed while the strip rested: it is drawn now, not at the next slow frame.
     if (this.restTimer != null) {
       window.clearTimeout(this.restTimer);
-      this.restFrame();
+      this.restFrame(this.frameToken);
       return;
     }
     if (this.running) return;
     this.running = true;
+    const token = ++this.frameToken;
     this.lastFrame = performance.now();
-    requestAnimationFrame(this.frame);
+    requestAnimationFrame((now) => this.frame(now, token));
   }
 
-  private restFrame = () => {
+  private restFrame = (token: number) => {
     this.restTimer = null;
-    requestAnimationFrame(this.frame);
+    requestAnimationFrame((now) => this.frame(now, token));
   };
+
+  /** Starts the loop again when it is marked running but no frame has come: Chromium stopped them. */
+  private nudgeFrames() {
+    if (!this.running || this.restTimer != null || document.hidden) return;
+    if (performance.now() - this.lastFrame < FRAME_STALL_MS) return;
+    this.stalled();
+  }
+
+  /** The page is visible again: frames that stopped while it was not are started again. */
+  private resumeFrames() {
+    if (!this.running || this.restTimer != null) return;
+    if (performance.now() - this.lastFrame < FRAME_STALL_MS) return;
+    this.stalled();
+  }
+
+  private stalled() {
+    this.running = false;
+    if (!this.frameStalled) {
+      this.frameStalled = true;
+      console.warn("[island] frame loop stalled; restarting");
+      void Bridge.log("island frame loop stalled: restarted");
+      // Restarting the loop is not enough when the surface itself was lost: ask Rust
+      // to hide and show the web view so it presents through a new one.
+      void Bridge.islandRepaint();
+    }
+    this.ensureRunning();
+  }
 
   /** Says to Rust when the strip begins and ends its rest: the cursor poll follows (`set_poll_rest`). */
   private setRest(on: boolean) {
@@ -1724,7 +1765,10 @@ export class Island {
     void Bridge.setPollRest(on);
   }
 
-  private frame = (nowMs: number) => {
+  private frame = (nowMs: number, token: number) => {
+    // A loop that was started again owns the frames now; this callback is from the one before it.
+    if (token !== this.frameToken) return;
+    this.frameStalled = false;
     let busy = false;
     try {
       busy = this.step(nowMs);
@@ -1736,8 +1780,8 @@ export class Island {
       void Bridge.log(`island frame failed: ${String(err)}`);
     }
     if (busy) {
-      if (this.rest) this.restTimer = window.setTimeout(this.restFrame, REST_FRAME_MS);
-      else requestAnimationFrame(this.frame);
+      if (this.rest) this.restTimer = window.setTimeout(() => this.restFrame(token), REST_FRAME_MS);
+      else requestAnimationFrame((now) => this.frame(now, token));
     } else {
       this.running = false;
       Sound.idle();

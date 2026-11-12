@@ -24,7 +24,7 @@ import { h, clear } from "../views/dom";
 import { card, row, field, iconBtn, list, toggle, type ListItem } from "../ui/components";
 import { icon } from "../ui/icons";
 import { installTooltip } from "../ui/tooltip";
-import { featureById, featureCtx, featureInfos, loadFeatures, onFeaturesChanged } from "../core/registry";
+import { featureById, featureCtx, featureInfos, loadAllStrings, loadFeatures, onFeaturesChanged } from "../core/registry";
 import { showOnboarding } from "../features/misc-late/onboarding";
 import { privacySection } from "../features/misc-late/privacy";
 import { sections } from "../island/sections";
@@ -2016,6 +2016,8 @@ async function main() {
   setLanguage(resolveLanguage(settings.language, systemLanguages()));
   applyDirection();
   await loadFeatures();
+  // Settings names every feature, including the ones that are off.
+  await loadAllStrings();
   search.input.placeholder = t("Search settings");
   // First run only: the welcome page, until it is dismissed (misc-late).
   await showOnboarding(root);

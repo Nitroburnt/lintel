@@ -10,9 +10,17 @@
 // task) or from `setup`, a late window loads normally. The registry keeps
 // feature code off that path, so `open` is safe from `start`, `stop` and `call`.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use notch_core::{Monitor, WindowSpec};
 use tauri::utils::config::Color;
 use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use webview2_com::Microsoft::Web::WebView2::Win32::{
+    ICoreWebView2_19, ICoreWebView2_3, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
+    COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+};
+use webview2_com::TrySuspendCompletedHandler;
+use wv2_core::Interface;
 
 use crate::{i18n, island, log, platform, Shared};
 
@@ -24,10 +32,84 @@ const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreen
 /// With native occlusion tracking off (so the island stays painted after the
 /// display turns off or the PC locks), WebView2 no longer learns that a hidden
 /// window is hidden: tell it, so a hidden window draws no frames.
-fn web_visible(win: &WebviewWindow, on: bool) {
-    let _ = win.with_webview(move |webview| unsafe {
+pub(crate) fn web_visible(win: &WebviewWindow, on: bool) -> bool {
+    win.with_webview(move |webview| unsafe {
         let _ = webview.controller().SetIsVisible(on);
-    });
+    })
+    .is_ok()
+}
+
+/// Tells WebView2 how much memory the page behind a window may keep. `low` is
+/// for a window that is out of the way: the renderer collects sooner and hands
+/// pages back. Nothing is suspended or reloaded, so the page is still there, and
+/// it is only ever lowered while the island is shrunk to the wake strip.
+///
+/// Not part of `web_visible`: `island::recover` hides and shows the island again
+/// within 16 ms to give it a fresh surface after a display wakes, and a trim
+/// started then is the one thing that would make that restore slow.
+///
+/// `with_webview` waits for the main thread, so this is never called on it.
+pub(crate) fn web_memory(win: &WebviewWindow, low: bool) -> bool {
+    let level = if low {
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
+    } else {
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+    };
+    win.with_webview(move |webview| unsafe {
+        let Ok(core) = webview.controller().CoreWebView2() else { return };
+        // An older WebView2 runtime than the binding knows: the level is a hint
+        // and nothing depends on it, so a refused cast is simply the old size.
+        let Ok(core) = core.cast::<ICoreWebView2_19>() else { return };
+        let _ = core.SetMemoryUsageTargetLevel(level);
+    })
+    .is_ok()
+}
+
+/// True while the settings window is out of sight, so a suspension that lands
+/// after it was asked for again knows to undo itself.
+static SETTINGS_HIDDEN: AtomicBool = AtomicBool::new(false);
+
+/// Hands the settings page's memory back while its window is hidden, and takes
+/// the page back when it is shown. `TrySuspend` is WebView2's own answer for a
+/// window nobody is looking at: the page and everything in it stay, the renderer
+/// and its backing store go to the page file. A runtime that will not suspend the
+/// page loses the window instead, which is what the app did before and is just
+/// as small; `show_settings` builds it again.
+///
+/// Only ever the settings window: a suspended island would not answer a hover.
+pub(crate) fn web_suspend(win: &WebviewWindow, on: bool) -> bool {
+    let handle = win.clone();
+    win.with_webview(move |webview| unsafe {
+        let Ok(core) = webview.controller().CoreWebView2() else { return };
+        let Ok(core) = core.cast::<ICoreWebView2_3>() else { return };
+        if !on {
+            // Not suspended: the call says so and nothing else happens.
+            let _ = core.Resume();
+            return;
+        }
+        let again = core.clone();
+        let gone = handle.clone();
+        let handler = TrySuspendCompletedHandler::create(Box::new(
+            move |result: wv2_core::Result<()>, suspended: bool| -> wv2_core::Result<()> {
+                if result.is_ok() && suspended {
+                    // Shown again before the suspension finished: put it back at
+                    // once, or the window comes up with a page that is not running.
+                    if !SETTINGS_HIDDEN.load(Ordering::Relaxed) {
+                        let _ = again.Resume();
+                    }
+                } else if SETTINGS_HIDDEN.load(Ordering::Relaxed) {
+                    // Busy with something WebView2 will not suspend: keep the
+                    // memory saved instead of the page, as before.
+                    let _ = gone.destroy();
+                }
+                Ok(())
+            },
+        ));
+        if core.TrySuspend(&handler).is_err() && SETTINGS_HIDDEN.load(Ordering::Relaxed) {
+            let _ = handle.destroy();
+        }
+    })
+    .is_ok()
 }
 
 /// The page behind a window before its own CSS paints: never a white flash.
@@ -128,8 +210,12 @@ pub fn close_all_of(app: &AppHandle, feature: &str) {
 
 const SETTINGS: &str = "settings";
 
-/// Created hidden at launch and only ever shown and hidden afterwards, so it
-/// opens at once and keeps its place.
+/// Built when Settings is first asked for, not at launch: the app used to keep a
+/// second web page — its renderer, its share of the browser process and its
+/// frames — for the whole session whether or not Settings was ever opened.
+///
+/// Closing it hides it and suspends its page (`web_suspend`), so the memory goes
+/// and the next open is instant rather than a rebuild.
 pub fn create_settings(app: &AppHandle) {
     match WebviewWindowBuilder::new(app, SETTINGS, WebviewUrl::App("settings.html".into()))
         .additional_browser_args(BROWSER_ARGS)
@@ -139,22 +225,32 @@ pub fn create_settings(app: &AppHandle) {
         .background_color(BACKDROP)
         .resizable(true)
         .visible(false)
-        // Built hidden at launch: it must not take the keyboard from whatever
-        // the user is typing in (it did, invisibly). `show_settings` gives it
-        // the focus when it is asked for.
+        // Shown only by `show_settings`, which also gives it the keyboard: built
+        // this way it never takes the focus from whatever the user is typing in.
         .focused(false)
         .center()
         .build()
     {
         Ok(win) => {
-            // Closing it must only hide it, or it could never be reopened.
+            SETTINGS_HIDDEN.store(false, Ordering::Relaxed);
             let hidden = win.clone();
             win.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    // Out of sight, not away: the keyboard goes back where it came
+                    // from, and the page is put down until Settings is asked for
+                    // again, which then costs nothing.
                     api.prevent_close();
                     platform::settings_closing(&hidden);
+                    SETTINGS_HIDDEN.store(true, Ordering::Relaxed);
                     let _ = hidden.hide();
-                    web_visible(&hidden, false);
+                    // Off this thread: `with_webview` waits for the main thread,
+                    // which runs this handler (island::recover says why).
+                    let win = hidden.clone();
+                    std::thread::spawn(move || {
+                        web_visible(&win, false);
+                        web_memory(&win, true);
+                        web_suspend(&win, true);
+                    });
                 }
             });
         }
@@ -164,8 +260,8 @@ pub fn create_settings(app: &AppHandle) {
 
 pub fn show_settings(app: &AppHandle) {
     let Some(win) = app.get_webview_window(SETTINGS) else {
-        // It failed to build at launch (WebView2 error): build it again, from
-        // async code, never from the command or menu callback that asked.
+        // Closed for good, or never built yet: build it, from async code, never
+        // from the command or menu callback that asked.
         log::line("settings window missing: creating it");
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
@@ -176,6 +272,11 @@ pub fn show_settings(app: &AppHandle) {
         });
         return;
     };
+    // Asked for before the window comes up: the page is resumed first, so it is
+    // running by the time it is on screen, and its memory is normal again.
+    SETTINGS_HIDDEN.store(false, Ordering::Relaxed);
+    web_suspend(&win, false);
+    web_memory(&win, false);
     platform::settings_opening(&win);
     web_visible(&win, true);
     let _ = win.unminimize();

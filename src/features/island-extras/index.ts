@@ -15,6 +15,13 @@ interface Quick { label: string; target: string }
 interface Site { name: string; url: string }
 const MAX_SITES = 12;
 
+/** A row whose control is a list of rows: its label and hint sit above the list, at full width. */
+const blockRow = (label: string, control: Node, hint?: string): HTMLElement => {
+  const el = row(label, control, hint);
+  el.classList.add("f-island-extras-block");
+  return el;
+};
+
 export default defineFeature({
   id: "island-extras",
   voice: () => import("./voice"),
@@ -71,8 +78,8 @@ export default defineFeature({
           row(cx.t("Follow the pointer"), toggle(s.followPointer === true, (on) => cx.settings.patch({ followPointer: on })),
             cx.t("The island moves to the display the pointer is on while it is closed.")),
           row(cx.t("Mirror shape"), h("label", { class: "field" }, shape, icon("chevd", 14))),
-          row(cx.t("Quick access items"), list),
-          row(cx.t("Websites"), sitesBox, cx.t("Round tiles in Quick access. A click opens the address in your browser.")),
+          blockRow(cx.t("Quick access items"), list),
+          blockRow(cx.t("Websites"), sitesBox, cx.t("Round tiles in Quick access. A click opens the address in your browser.")),
         );
       });
     draw();

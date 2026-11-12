@@ -11,14 +11,45 @@ import { Bridge, onEvent, type FeatureInfo } from "./bridge";
 import { collectVoice, type FeatureCtx, type FeatureModule, type IslandApi, type Value, type VoiceEntry } from "./feature";
 
 const modules = import.meta.glob("../features/*/index.ts", { eager: true });
-const strings = import.meta.glob("../features/*/strings.json", { eager: true });
+
+// Feature strings are a chunk each, read when a window needs them, not at import:
+// the island draws only the features that run, so the tables of the rest (all ten
+// languages of them) are text it would never look up.
+const tables = import.meta.glob("../features/*/strings.json") as Record<
+  string,
+  () => Promise<{ default?: { strings?: Record<string, unknown> } }>
+>;
+
+const merged = new Set<string>();
+
+const idOfTable = (path: string) => path.slice("../features/".length).split("/")[0];
+
+/** Merges the tables not merged yet: those of `only`, or every one of them. */
+async function mergeTables(only?: ReadonlySet<string>): Promise<void> {
+  const todo = Object.entries(tables).filter(([path]) => !merged.has(path) && (!only || only.has(idOfTable(path))));
+  await Promise.all(
+    todo.map(async ([path, load]) => {
+      merged.add(path);
+      try {
+        const module = await load();
+        mergeStrings(module.default?.strings ?? {});
+      } catch (err) {
+        console.error(`[feature ${idOfTable(path)}] strings failed`, err);
+      }
+    }),
+  );
+}
+
+/**
+ * Every feature's strings, for a window that names features whether they run or
+ * not: Settings lists them all, so its titles must translate for a feature that
+ * is off (the island never draws one).
+ */
+export function loadAllStrings(): Promise<void> {
+  return mergeTables();
+}
 
 export const FEATURES: FeatureModule[] = Object.values(modules).map((m) => (m as { default: FeatureModule }).default);
-
-// Feature strings join the i18n table before anything is drawn.
-for (const table of Object.values(strings)) {
-  mergeStrings((table as { default: { strings?: Record<string, unknown> } }).default.strings ?? {});
-}
 
 export function featureById(id: string): FeatureModule | undefined {
   return FEATURES.find((f) => f.id === id);
@@ -117,6 +148,9 @@ let loading: Promise<void> | null = null;
 export async function loadFeatures(): Promise<readonly FeatureInfo[]> {
   const read = async () => {
     infos = (await Bridge.featuresList()) ?? [];
+    // What runs is what this window draws, and what it draws needs its strings:
+    // a feature switched on later is read here, before the watchers redraw.
+    await mergeTables(new Set(infos.filter((f) => f.running).map((f) => f.id)));
   };
   loading ??= (async () => {
     await read();

@@ -6,6 +6,15 @@
 .f-island-extras-quick { display: flex; flex-wrap: wrap; gap: var(--s-2); align-content: center; justify-content: center; height: 100%; padding: var(--s-2) var(--s-4); }
 .f-island-extras-edit { display: flex; flex-direction: column; gap: var(--s-2); }
 .f-island-extras-erow { display: flex; gap: var(--s-2); align-items: center; }
+/* These rows hold a list, not one right-hand control: label and hint go above it, full width. */
+.row.f-island-extras-block { grid-template-columns: minmax(0, 1fr); padding-block: var(--s-3); }
+.row.f-island-extras-block > .row-label { grid-column: 1; grid-row: 1; }
+.row.f-island-extras-block > .row-hint { grid-column: 1; grid-row: 2; margin-top: 2px; }
+.row.f-island-extras-block > .f-island-extras-edit {
+  grid-column: 1; grid-row: 3; justify-self: stretch; margin-top: var(--s-2);
+}
+/* The two fields of a line share it; Remove and Add keep their width. */
+.f-island-extras-erow > .field { flex: 1 1 0; min-width: 0; }
 .f-island-extras-quick { overflow-y: auto; }
 .f-island-extras-sites { flex-basis: 100%; display: flex; flex-wrap: wrap; justify-content: center; gap: var(--s-2); }
 .f-island-extras-site { all: unset; box-sizing: border-box; width: 56px; display: flex; flex-direction: column; align-items: center; gap: var(--s-1); cursor: pointer; border-radius: var(--r-sm); padding: var(--s-1) 0; transition: background var(--d-fast) var(--ease-out); }
