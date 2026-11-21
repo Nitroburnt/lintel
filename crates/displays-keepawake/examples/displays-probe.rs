@@ -16,7 +16,7 @@ fn main() {
     for d in &displays {
         let (method, level) = display::probe(d);
         println!(
-            "  {} | {} | {} | {}x{} at {},{} | method {} | brightness {}",
+            "  {} | {} | {} | {}x{} at {},{} | method {} | brightness {} | contrast {}",
             d.id,
             d.name,
             if d.internal { "built-in" } else { "external" },
@@ -26,6 +26,7 @@ fn main() {
             d.y,
             method.name(),
             level.map_or("not readable".to_string(), |p| format!("{p}%")),
+            display::read_contrast(d).map_or("not readable".to_string(), |p| format!("{p}%")),
         );
     }
 

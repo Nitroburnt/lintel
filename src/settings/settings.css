@@ -51,6 +51,12 @@ body.settings-window {
   gap: var(--s-3);
 }
 
+/* The page follows the window; prose keeps a readable measure. */
+.page > .hint,
+.page section > .hint {
+  max-width: 78ch;
+}
+
 .page > h1 {
   margin-bottom: var(--s-1);
 }
@@ -366,6 +372,14 @@ select option {
 .tag.err {
   background: color-mix(in srgb, var(--bad) 14%, transparent);
   color: color-mix(in srgb, var(--bad), var(--ink) 32%);
+}
+
+/* An option the search found: its page opens here and it is marked for a moment. */
+.found {
+  border-radius: var(--r-xs);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
+  transition: background 150ms, box-shadow 150ms;
 }
 
 /* Arabic: the window reads right to left (main.ts sets <html dir="rtl">);

@@ -157,6 +157,7 @@ fn show(cx: &Ctx, x: i32, y: i32) -> Option<(i32, i32, i32, i32)> {
         transparent: true,
         exclude_from_capture: true,
         monitor: Monitor::Cursor,
+        anchor: None,
     };
     let win = cx.window().open(spec).ok()?;
     let scale = win.scale_factor().unwrap_or(1.0);

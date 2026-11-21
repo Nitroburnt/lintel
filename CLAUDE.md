@@ -1,6 +1,6 @@
 # Lintel — guide for AI coding agents
 
-Lintel is a Windows-only notch toolkit: an island that stays hidden and slides out of the top edge of the screen when hovered or when something needs the user. It hosts AI coding agent sessions and approvals, chat, media, system HUDs, a file shelf and a large set of system utilities, each of which can be turned off. Version 1.0.0, GPL-3.0-or-later.
+Lintel is a Windows-only notch toolkit: an island that stays hidden and slides out of the top edge of the screen when hovered or when something needs the user. It hosts AI coding agent sessions and approvals, chat, media, system HUDs, a file shelf and a large set of system utilities, each of which can be turned off. Version 2.1.0, GPL-3.0-or-later.
 
 It is a Tauri 2 app (Rust backend, plain TypeScript + Vite frontend, no UI framework). The three projects it grew from are credited in `NOTICE.md`. The crates and some identifiers keep the old code name `notch` (`notch-feat-*`, `notch_core`); do not rename them (`docs/ARCHITECTURE.md` §13).
 

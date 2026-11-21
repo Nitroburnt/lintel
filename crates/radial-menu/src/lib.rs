@@ -20,7 +20,7 @@
 
 pub mod geometry;
 
-use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering::Relaxed};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
@@ -236,6 +236,9 @@ struct Active {
     tx: Sender<Msg>,
     profile: usize,
     held: Arc<Bits>,
+    /// The chord went up at least once since the wheel opened: a later press of
+    /// the same key is a new press, not the key repeating.
+    released: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
 }
 
@@ -534,10 +537,11 @@ fn profiles(settings: &Value) -> Vec<(String, Vec<Item>)> {
 }
 
 fn open_wheel(cx: &Ctx, index: usize, sticky: bool) -> Result<Value, String> {
-    // A wheel is open: the same key again closes it (unless it is only the key repeating), another key switches.
+    // A wheel is open: the same key again closes it, another key switches — unless the chord has been
+    // down all along, where the press is only the key repeating.
     let previous = {
         let mut active = lock(&ACTIVE);
-        if active.as_ref().is_some_and(|a| a.profile == index && a.held.any_down()) {
+        if active.as_ref().is_some_and(|a| a.profile == index && a.held.any_down() && !a.released.load(Relaxed)) {
             return Ok(json!({}));
         }
         active.take()
@@ -579,6 +583,7 @@ fn open_wheel(cx: &Ctx, index: usize, sticky: bool) -> Result<Value, String> {
         swallowed: AtomicU32::new(0),
     });
     let held = Arc::new(Bits::default());
+    let released = Arc::new(AtomicBool::new(false));
     let keys_swallowed = Arc::new(Bits::default());
     let (tx, rx) = mpsc::channel::<Msg>();
 
@@ -622,10 +627,11 @@ fn open_wheel(cx: &Ctx, index: usize, sticky: bool) -> Result<Value, String> {
         })
     };
     let keyboard = {
-        let (held, swallowed, tx) = (held.clone(), keys_swallowed.clone(), tx.clone());
+        let (held, released, swallowed, tx) = (held.clone(), released.clone(), keys_swallowed.clone(), tx.clone());
         svc_input::keyboard(5, false, move |k| {
             if !k.down {
                 if held.has(k.vk) {
+                    released.store(true, Relaxed);
                     let _ = tx.send(Msg::Release);
                 }
                 return if swallowed.clear(k.vk) { Verdict::Swallow } else { Verdict::Pass };
@@ -684,7 +690,7 @@ fn open_wheel(cx: &Ctx, index: usize, sticky: bool) -> Result<Value, String> {
             .spawn(move || worker(cx, rx, wheel, (mouse, keyboard), media))
             .map_err(|e| format!("The wheel could not start: {e}"))?
     };
-    *lock(&ACTIVE) = Some(Active { tx, profile: index, held, join: Some(handle) });
+    *lock(&ACTIVE) = Some(Active { tx, profile: index, held, released, join: Some(handle) });
     if let Some(win) = cx.app().get_webview_window(LABEL) {
         let _ = win.show();
     }
@@ -707,6 +713,7 @@ fn place(cx: &Ctx, centre: (i32, i32), scale: f64) -> Result<(), String> {
             exclude_from_capture: false,
             transparent: true,
             monitor: Monitor::Cursor,
+            anchor: None,
         })?,
     };
     let (origin, side) = geometry::window(centre, scale);

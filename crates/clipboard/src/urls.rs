@@ -1,6 +1,5 @@
 // What a copied text is and what may be done with it: a web link and its
-// tracking parameters, and the look of a secret. Text in, answer out; nothing
-// here touches the clipboard.
+// tracking parameters. Text in, answer out; nothing here touches the clipboard.
 
 use percent_encoding::percent_decode_str;
 
@@ -115,47 +114,6 @@ pub fn clean(text: &str, extra: &[String]) -> Option<Cleaned> {
     Some(Cleaned { url: format!("{}{query}{}", &link[..question], &link[fragment..]), removed })
 }
 
-/// 8-4-4-4-12 hex digits, with or without braces: an identifier, nobody's secret.
-fn is_identifier(text: &str) -> bool {
-    let value = text.trim();
-    let value = value.strip_prefix('{').and_then(|v| v.strip_suffix('}')).unwrap_or(value);
-    let groups: Vec<&str> = value.split('-').collect();
-    groups.iter().map(|g| g.len()).eq([8, 4, 4, 4, 12]) && groups.iter().all(|g| g.chars().all(|c| c.is_ascii_hexdigit()))
-}
-
-/// The text looks like a real key: a known key prefix, a JWT, a PEM private-key
-/// header, or one long unbroken high-entropy string. The words "password" or
-/// "token" alone mean nothing. A guess; the marks password managers put on the
-/// clipboard are what really keeps a secret out (history.rs).
-pub fn looks_sensitive(text: &str) -> bool {
-    let t = text.trim();
-    if t.contains("-----BEGIN") && t.contains("PRIVATE KEY") {
-        return true;
-    }
-    if is_web(t) || is_identifier(t) || t.contains(char::is_whitespace) {
-        return false;
-    }
-    let known = ["sk-", "ghp_", "gho_", "ghs_", "ghu_", "github_pat_", "AKIA", "ASIA", "xoxb-", "xoxp-", "xoxa-", "xoxs-", "xapp-", "AIza"];
-    if t.len() >= 16 && known.iter().any(|p| t.starts_with(p)) {
-        return true;
-    }
-    let parts: Vec<&str> = t.split('.').collect();
-    if parts.len() == 3 && t.starts_with("eyJ") && parts.iter().all(|p| p.len() >= 4 && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')) {
-        return true;
-    }
-    // Long, mixing letters and digits, and random enough (a word or a path is not).
-    let n = t.chars().count();
-    if n < 32 || n > 512 || !t.chars().any(|c| c.is_ascii_digit()) || !t.chars().any(|c| c.is_ascii_alphabetic()) || t.contains('/') && t.contains('.') {
-        return false;
-    }
-    let mut counts = std::collections::HashMap::new();
-    for c in t.chars() {
-        *counts.entry(c).or_insert(0usize) += 1;
-    }
-    let entropy: f64 = counts.values().map(|&k| { let p = k as f64 / n as f64; -p * p.log2() }).sum();
-    entropy > 4.2
-}
-
 /// The checks the probe runs before it touches the clipboard.
 pub fn self_check() {
     let none: [String; 0] = [];
@@ -169,13 +127,4 @@ pub fn self_check() {
     assert_eq!(clean("https://example.com/?ref=a&b=1", &["ref".to_string()]).unwrap().url, "https://example.com/?b=1");
     assert!(clean("see https://example.com/?utm_source=x", &none).is_none());
     assert!(clean("ftp://example.com/?utm_source=x", &none).is_none());
-    assert!(!looks_sensitive("my password is hunter2"));
-    assert!(!looks_sensitive("let token = next_token();"));
-    assert!(looks_sensitive("-----BEGIN RSA PRIVATE KEY-----"));
-    assert!(looks_sensitive("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV"));
-    assert!(looks_sensitive("wJalrXUtnFEMI8K7MDENGbPxRfiCYzR3v9sQ0Lp4aZ"));
-    assert!(looks_sensitive("ghp_A1b2C3d4E5f6G7h8I9j0-KlMn"));
-    assert!(!looks_sensitive("a plain sentence with 3 words more"));
-    assert!(!looks_sensitive("{123e4567-e89b-12d3-a456-426614174000}"));
-    assert!(!looks_sensitive("https://example.com/a1b2c3?d=4&e=5"));
 }

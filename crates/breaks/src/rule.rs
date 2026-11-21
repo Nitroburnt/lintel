@@ -207,3 +207,86 @@ impl Rule {
         })
     }
 }
+
+// ── Quiet hours ───────────────────────────────────────────────────────────────
+
+/// "HH:MM" on the 24-hour clock as minutes of the day; anything else is `None`.
+pub fn minutes_of(text: &str) -> Option<u32> {
+    let (h, m) = text.trim().split_once(':')?;
+    if h.is_empty() || h.len() > 2 || m.len() != 2 {
+        return None;
+    }
+    let (h, m): (u32, u32) = (h.parse().ok()?, m.parse().ok()?);
+    (h < 24 && m < 60).then_some(h * 60 + m)
+}
+
+/// Whether `at` is inside the quiet window `from`–`to`, both minutes of the day. An end before
+/// the start crosses midnight (22:00–07:00); one equal to the start is no window at all.
+pub fn within(at: u32, from: u32, to: u32) -> bool {
+    if from == to {
+        return false;
+    }
+    if from < to {
+        at >= from && at < to
+    } else {
+        at >= from || at < to
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_clock_time_is_read_strictly() {
+        assert_eq!(minutes_of("00:00"), Some(0));
+        assert_eq!(minutes_of("09:30"), Some(570));
+        assert_eq!(minutes_of("23:59"), Some(1439));
+        assert_eq!(minutes_of(" 7:05 "), Some(425));
+        for bad in ["24:00", "12:60", "9", "09:5", "09:300", "nine:30", "-1:00", ""] {
+            assert_eq!(minutes_of(bad), None, "{bad} was taken");
+        }
+    }
+
+    #[test]
+    fn a_window_of_the_day_holds_its_start_and_lets_its_end_go() {
+        assert!(within(9 * 60, 9 * 60, 10 * 60));
+        assert!(within(9 * 60 + 59, 9 * 60, 10 * 60));
+        assert!(!within(10 * 60, 9 * 60, 10 * 60));
+        assert!(!within(8 * 60 + 59, 9 * 60, 10 * 60));
+    }
+
+    #[test]
+    fn a_window_over_midnight_holds_both_ends() {
+        assert!(within(22 * 60, 22 * 60, 7 * 60));
+        assert!(within(23 * 60 + 30, 22 * 60, 7 * 60));
+        assert!(within(0, 22 * 60, 7 * 60));
+        assert!(within(6 * 60 + 59, 22 * 60, 7 * 60));
+        assert!(!within(7 * 60, 22 * 60, 7 * 60));
+        assert!(!within(12 * 60, 22 * 60, 7 * 60));
+    }
+
+    #[test]
+    fn an_empty_window_never_holds() {
+        assert!(!within(0, 0, 0));
+        assert!(!within(12 * 60, 9 * 60, 9 * 60));
+    }
+
+    #[test]
+    fn a_break_waits_while_the_reason_says_busy_and_starts_when_it_ends() {
+        let mut rule = Rule {
+            cfg: Config {
+                eye: Plan { on: true, every: 10, secs: 5 },
+                mov: Plan::default(),
+                snooze: 60,
+                warn: 0,
+            },
+            ..Default::default()
+        };
+        assert!(rule.tick(5, false, || false).is_empty());
+        assert_eq!(rule.tick(5, false, || true), vec![Ev::Held(Kind::Eye)]);
+        // It asks again after RECHECK; the ask still waits until the reason is gone.
+        assert!(rule.tick(RECHECK, false, || true).is_empty());
+        assert_eq!(rule.tick(RECHECK, false, || false), vec![Ev::Start(Kind::Eye, 5)]);
+    }
+}

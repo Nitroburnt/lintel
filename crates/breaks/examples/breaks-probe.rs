@@ -27,7 +27,7 @@ fn wait(ms: u64) {
 
 fn front(fg: &svc_sysevents::Foreground) {
     match sys::app_of(fg.hwnd, fg.pid, &fg.exe) {
-        Some((key, name)) => println!("  in front: {name} [{key}] category={} fullscreen={}", usage::category(&key), fg.fullscreen),
+        Some(app) => println!("  in front: {} [{}] path={:?} category={} fullscreen={}", app.name, app.key, app.path, usage::category(&app.key), fg.fullscreen),
         None => println!("  in front: a window Windows will not name (exe {:?})", fg.exe),
     }
 }
@@ -169,7 +169,7 @@ fn engine_live() {
     wait(2500);
     println!("  eye breaks and screen time on: {} thread(s) (the loop, and the service that listens to Windows)", threads());
     println!("  status: {}", engine.status_now());
-    let usage = engine.usage(false);
+    let usage = engine.usage(None, false);
     println!("  screen time after 2.5 s: {} s counted, apps {} ({})", usage["total"], usage["apps"],
         if sys::idle_secs() >= IDLE_AFTER { "the person is away: the clock stands still" } else { "the person is here" });
 
@@ -287,29 +287,105 @@ impl Sim {
 }
 
 fn screen_time() {
+    let prefs = usage::Prefs::default();
     let mut usage = Usage::load(None);
-    let app = |key: &str, name: &str| Some((key.to_string(), name.to_string()));
+    let app = |key: &str, name: &str| {
+        Some(usage::AppInfo { key: key.to_string(), name: name.to_string(), path: format!("C:\\Program Files\\{name}\\{key}.exe") })
+    };
     let day = "2026-10-11";
-    usage.front(day, app("code", "Visual Studio Code"));
-    usage.add(day, 1500);
-    usage.front(day, app("chrome", "Google Chrome"));
-    usage.add(day, 600);
-    usage.front(day, None); // this app's own window: nobody's time
-    usage.add(day, 30);
-    usage.front(day, app("code", "Visual Studio Code"));
-    usage.add(day, 300);
-    let snap = usage.snapshot(day);
-    println!("  today: {} s in {} switch(es): {}", snap["total"], snap["switches"], snap["apps"]);
-    assert_eq!((snap["total"].as_u64(), snap["switches"].as_u64()), (Some(2400), Some(2)));
-    assert_eq!(snap["apps"][0], serde_json::json!({ "name": "Visual Studio Code", "secs": 1800, "cat": "development" }));
-    for d in 12..=20 {
-        usage.add(&format!("2026-10-{d}"), 60);
+    usage.front(app("code", "Visual Studio Code"));
+    usage.add(day, 9, 1500, false);
+    usage.front(app("chrome", "Google Chrome"));
+    usage.add(day, 10, 600, false);
+    // Nobody in front (the desktop) is screen time, not nothing.
+    usage.front(None);
+    usage.add(day, 14, 30, false);
+    usage.front(app("code", "Visual Studio Code"));
+    usage.add(day, 15, 300, false);
+
+    let snap = usage.snapshot(day, &prefs, true);
+    println!("  the day: {} s, {} switch(es), {} app(s): {}", snap["total"], snap["switches"], snap["apps"].as_array().map_or(0, |a| a.len()), snap["apps"]);
+    assert_eq!((snap["total"].as_u64(), snap["switches"].as_u64()), (Some(2430), Some(3)));
+    assert_eq!(
+        snap["apps"][0],
+        serde_json::json!({ "key": "code", "name": "Visual Studio Code", "path": "C:\\Program Files\\Visual Studio Code\\code.exe", "title": "", "secs": 1800, "cat": "development" })
+    );
+    assert!(snap["apps"].as_array().unwrap().iter().any(|a| a["key"] == "desktop"), "the desktop's time is a row too");
+    let hours: u64 = snap["hours"].as_array().unwrap().iter().map(|h| h.as_u64().unwrap()).sum();
+    assert_eq!(hours, snap["total"].as_u64().unwrap(), "the hours are the day's seconds");
+    assert_eq!(snap["hours"][9], 1500);
+
+    // Hidden apps leave the list and not the day.
+    let mut hidden = prefs.clone();
+    hidden.hidden.insert("chrome".into());
+    let hid = usage.snapshot(day, &hidden, true);
+    assert!(!hid["apps"].as_array().unwrap().iter().any(|a| a["key"] == "chrome"), "a hidden app is not listed");
+    assert_eq!(hid["total"], 2430, "its time is still the day's");
+    println!("  hidden chrome: {} row(s), total {} s", hid["apps"].as_array().map_or(0, |a| a.len()), hid["total"]);
+
+    // The person's own category wins over the table.
+    let mut cats = prefs.clone();
+    cats.cats.insert("code".into(), "productivity".into());
+    let recat = usage.snapshot(day, &cats, true);
+    let code = recat["apps"].as_array().unwrap().iter().find(|a| a["key"] == "code").unwrap();
+    assert_eq!(code["cat"], "productivity");
+
+    // One program's own page, and where its file is.
+    let one = usage.app("code", day, &prefs);
+    println!("  Visual Studio Code: {} s of {} s ({}%): {}", one["secs"], one["total"], (one["share"].as_f64().unwrap_or(0.0) * 100.0).round(), one["days"]);
+    assert_eq!(one["secs"], 1800);
+    assert_eq!(usage.path_of("code").as_deref(), Some("C:\\Program Files\\Visual Studio Code\\code.exe"));
+    assert!(one["days"].as_object().unwrap().contains_key(day));
+
+    // Thirty days are kept by default, and not thirty-one.
+    for d in 12..=45 {
+        usage.add(&format!("2026-10-{d}"), 12, 60, false);
     }
-    let days = usage.snapshot(day)["days"].as_object().map_or(0, |d| d.len());
-    println!("  days kept after ten days of use: {days}");
-    assert_eq!(days, 7);
+    let days = usage.snapshot(day, &prefs, true)["days"].as_object().map_or(0, |d| d.len());
+    println!("  days kept after thirty-five days of use: {days}");
+    assert_eq!(days, 30);
+
+    // The person's own window: unlimited keeps every day.
+    let mut all = Usage::load(None);
+    all.set_keep(0);
+    for d in 12..=56 {
+        all.add(&format!("2026-10-{d}"), 12, 60, false);
+    }
+    let kept = all.snapshot(day, &prefs, true)["days"].as_object().map_or(0, |d| d.len());
+    println!("  days kept with unlimited: {kept}");
+    assert_eq!(kept, 45);
+
+    // Going idle takes back the tail the person was already walking away from.
+    let mut idle = Usage::load(None);
+    idle.front(app("chrome", "Google Chrome"));
+    for _ in 0..200 {
+        idle.add(day, 12, 1, false);
+    }
+    idle.undo(IDLE_AFTER);
+    let after = idle.snapshot(day, &prefs, true);
+    println!("  200 s counted, {IDLE_AFTER} s taken back: {} s left", after["total"]);
+    assert_eq!(after["total"], 80);
+    assert_eq!(after["apps"][0]["secs"], 80);
+    assert_eq!(after["hours"][12], 80);
+
+    // Lintel's own windows are a row of their own, apart from the desktop and from whatever was in
+    // front behind the island.
+    let mut mine = Usage::load(None);
+    mine.front(app("chrome", "Google Chrome"));
+    mine.add(day, 9, 60, false);
+    mine.add(day, 9, 90, true);
+    let own = mine.snapshot(day, &prefs, true);
+    println!("  the pointer over the island: {}", own["apps"]);
+    assert!(
+        own["apps"].as_array().unwrap().iter().any(|a| a["key"] == usage::LINTEL && a["secs"] == 90),
+        "Lintel is a row of its own"
+    );
+    assert!(!own["apps"].as_array().unwrap().iter().any(|a| a["key"] == "explorer"), "and not Windows Explorer's");
+    assert_eq!(own["switches"], 1, "the pointer over the island is a switch like a window");
+
     for key in ["idea64", "gimp-2.10", "ms-teams", "explorer", "some-game"] {
         print!("  {key}={}", usage::category(key));
     }
     println!();
+    assert!(usage::known_category("design") && !usage::known_category("nonsense"));
 }

@@ -33,7 +33,7 @@ import { answerRequest, decideRequest, jumpToSession, returnRequest } from "./ag
 import { comboCodes, comboEvent } from "./keys";
 import { FLOAT_TOP, PILL_H, PILL_W, dragStarted, resolve, settle, type Display } from "./place";
 import { buildHome } from "./home";
-import { HOME_KEY, Sections, activities, galleryHeight, headerKeys, sections, setBuilder, surfaceKey, type Activity } from "./sections";
+import { HOME_KEY, Sections, activities, galleryHeight, headerKeys, moveTab, sections, setBuilder, stepTab, surfaceKey, type Activity } from "./sections";
 import type { ViewCommand } from "./shortcuts";
 import { Strip, type StripContent } from "./strip";
 import { Travel } from "./travel";
@@ -125,12 +125,13 @@ export class Island {
    * The microphone indicator (docs/VOICE.md §7.5, `IslandApi.ear`): 28 × 3 at the top centre, over
    * whatever the island shows. Never a target of the pointer, and no part of the shape Rust tests
    * clicks against: the wake strip under it and the click-through are what they were.
+   * On a floating island the edge is lower in the window, and it moves with it (applyGeometry).
    * debt: on the pill of a floating island it sits at the top edge, not in the middle (never looked at).
    */
   private earEl = h("div", {
     id: "ear",
     style:
-      "position:absolute;top:0;left:50%;z-index:3;width:28px;height:3px;margin-left:-14px;border-radius:var(--r-pill);" +
+      "position:absolute;left:50%;z-index:3;width:28px;height:3px;margin-left:-14px;border-radius:var(--r-pill);" +
       "background:var(--accent);opacity:0;pointer-events:none;" +
       "transition:opacity var(--d-fast) var(--ease-out),background-color var(--d-fast) var(--ease-out)",
   });
@@ -256,6 +257,8 @@ export class Island {
   private lastTool: string | null = null;
   /** The view an open asked for by code (an alert, a tab, a shortcut) is for; null when the pointer opened the strip. */
   private forced: IslandViewName | null = null;
+  /** The page on screen was reached by resting on a tab: it never takes the keyboard (§4.1). */
+  private byHoverView = false;
   private lastWheel = 0;
 
   /** The launch greeting ended, or the island came out of hidden — two of the
@@ -582,7 +585,7 @@ export class Island {
 
   private build() {
     const actions: ViewActions = {
-      setView: (v) => this.setView(v),
+      setView: (v, byHover) => this.setView(v, byHover),
       cancelDrop: () => this.discardDrop(),
       collapse: () => this.collapse(),
       foldApproval: () => this.foldApproval(),
@@ -665,7 +668,8 @@ export class Island {
       },
       openSettingsWindow: () => void Bridge.openSettingsWindow(),
       blip: () => Sound.play("blip"),
-      openSection: (key) => this.openSection(key),
+      openSection: (key, byHover) => this.openSection(key, byHover),
+      moveTab: (from, to) => this.reorderTabs(moveTab(State.settings.islandTabs, from, to)),
       activeSection: () => this.sections.active,
       level: () => this.arbiter.level?.notice ?? null,
       featureOn,
@@ -920,6 +924,7 @@ export class Island {
     this.closeReader();
     this.stopSequenceIfLeaving(view);
     if (view !== "overview") closePlanCard();
+    this.byHoverView = false;
     State.view = view;
     if (State.mode !== "expanded") this.setMode("expanded");
     else this.animateGeometry();
@@ -927,7 +932,7 @@ export class Island {
     State.notify();
   }
 
-  setView(view: IslandViewName) {
+  setView(view: IslandViewName, byHover = false) {
     this.closeReader();
     this.stopSequenceIfLeaving(view);
     if (view !== "overview") closePlanCard();
@@ -935,14 +940,26 @@ export class Island {
     State.view = view;
     State.lastActivity = performance.now();
     this.animateGeometry();
+    this.byHoverView = byHover;
+    State.notify();
+  }
+
+  /**
+   * The header's tabs in a new order (a drag on one, or Ctrl+Shift+← / →): that is
+   * Settings › Island's `islandTabs`, saved like any other setting.
+   */
+  reorderTabs(next: string[] | null) {
+    if (!next) return;
+    State.settings.islandTabs = next;
+    void Bridge.saveSettings(State.settings);
     State.notify();
   }
 
   /** Opens the island on a feature's section (`<feature>.<id>`), if that feature is on. */
-  openSection(key: string) {
+  openSection(key: string, byHover = false) {
     if (!this.sections.find(key)) return;
     this.sections.active = key;
-    this.setView("section");
+    this.setView("section", byHover);
   }
 
   private forceOpen(view: IslandViewName) {
@@ -1295,6 +1312,8 @@ export class Island {
     this.islandEl.style.width = `${w}px`;
     this.islandEl.style.height = `${hh}px`;
     this.islandEl.style.borderRadius = this.floating ? `${r}px` : `0 0 ${r}px ${r}px`;
+    // The indicator sits on the island's own top edge, which is lower in the window when it floats.
+    this.earEl.style.top = `${this.top}px`;
     const rect = { x: (PANEL_W - w) / 2, y: this.top, w, h: hh };
     const p = this.pushedRect;
     if (Math.abs(p.x - rect.x) > 0.5 || p.y !== rect.y || Math.abs(p.w - rect.w) > 0.5 || Math.abs(p.h - rect.h) > 0.5) {
@@ -1445,6 +1464,15 @@ export class Island {
       if (e.ctrlKey && !e.altKey && e.key === "Tab") {
         e.preventDefault();
         this.cycleTab(e.shiftKey ? -1 : 1);
+        return;
+      }
+      // Ctrl+Shift+← / →: the open section's tab moves one place along the header.
+      if (e.ctrlKey && e.shiftKey && !e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        const key = State.view === "section" ? this.sections.active : null;
+        const next = key ? stepTab(State.settings.islandTabs, key, e.key === "ArrowRight" ? 1 : -1) : null;
+        if (!next) return;
+        e.preventDefault();
+        this.reorderTabs(next);
         return;
       }
       // Settings › Island "Keyboard jumps" off: neither of the two below.
@@ -2113,7 +2141,7 @@ export class Island {
     // being asked (the chat, the gallery's filter, a section that says so), and
     // never while it is only open because the pointer rested on it.
     const def = section ? this.sections.find(section)?.def : undefined;
-    const typing = !expanded || this.fsm.openedByHover
+    const typing = !expanded || this.fsm.openedByHover || this.byHoverView
       ? null
       : State.view === "prompt" || State.view === "gallery" ? State.view
       : def?.keyboard ? section

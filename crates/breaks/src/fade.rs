@@ -1,12 +1,14 @@
 // The fade: for a break, every screen goes to black with the countdown on it.
 //
 // One window per monitor on a thread of its own, there only for the break. The windows are
-// click-through, topmost, without a border and never take the keyboard, so they cannot hold the
-// person: whatever is typed or clicked still goes to the window underneath. Esc and a click end
-// the fade at once (two low-level hooks, installed for as long as the fade and not a moment
-// longer); it ends by itself when the countdown does; `close` ends it from outside; and the
-// windows go with the process, however that ends. Plain Win32 and GDI, not a web view: nothing to
-// load, so it is on screen the moment the break starts.
+// topmost, without a border, and never take the keyboard, so they cannot hold the person: what is
+// typed still goes to the window underneath. A click lands on the overlay itself and skips the
+// break, so a click on a black screen never presses what it cannot see. Esc ends it at once: a
+// plain Esc hotkey (which Windows still delivers while an elevated window such as Task Manager has
+// the foreground, where a low-level hook of this process is not called at all) and, for the usual
+// case, a keyboard hook; it ends by itself when the countdown does; `close` ends it from outside;
+// and the windows go with the process, however that ends. Plain Win32 and GDI, not a web view:
+// nothing to load, so it is on screen the moment the break starts.
 //
 // debt: drawn in Segoe UI; the app's bundled web font is not a font GDI can load.
 
@@ -25,15 +27,15 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
-use windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
+use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, VK_ESCAPE};
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW,
     KillTimer, PostQuitMessage, PostThreadMessageW, RegisterClassW, SetLayeredWindowAttributes, SetTimer,
     SetWindowsHookExW, ShowWindow, SystemParametersInfoW, UnhookWindowsHookEx, UnregisterClassW, HHOOK, KBDLLHOOKSTRUCT,
-    LLKHF_INJECTED, LWA_ALPHA, MSG, MSLLHOOKSTRUCT, SPI_GETCLIENTAREAANIMATION, SW_SHOWNOACTIVATE,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_APP, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN,
+    LLKHF_INJECTED, LWA_ALPHA, MSG, SPI_GETCLIENTAREAANIMATION, SW_SHOWNOACTIVATE,
+    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WH_KEYBOARD_LL, WM_APP, WM_ERASEBKGND, WM_HOTKEY, WM_KEYDOWN, WM_LBUTTONDOWN,
     WM_MBUTTONDOWN, WM_PAINT, WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_TIMER, WM_XBUTTONDOWN, WNDCLASSW, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 /// The class of the fade's windows (the probe looks for it to see that none is left).
@@ -47,10 +49,10 @@ const TIMER_FADE: usize = 1;
 const TIMER_SECOND: usize = 2;
 /// Thread message: fade out and go.
 const CLOSE: u32 = WM_APP + 1;
+/// The Esc hotkey, registered for as long as the fade is on screen.
+const HOTKEY: i32 = 1;
 /// Where the number stands on a screen, in percent of its height from the top.
 const NUMBER: (i32, i32) = (40, 62);
-/// `MSLLHOOKSTRUCT.flags`: the event was made by a program, not by the person.
-const MOUSE_INJECTED: u32 = 1;
 
 // The tokens of src/ui/tokens.css, as GDI wants them (0x00BBGGRR).
 const INK: COLORREF = COLORREF(0x00F8_F6F5);
@@ -71,6 +73,8 @@ struct Stage {
     alpha: u8,
     /// Told once when the person ends the fade; `None` once it is on its way out.
     skip: Option<Box<dyn FnOnce() + Send>>,
+    /// The Esc hotkey was registered: it ends the fade even where the keyboard hook is not called.
+    hotkey: bool,
 }
 
 thread_local! {
@@ -110,6 +114,11 @@ impl Stage {
         self.skip = None;
         for hook in self.hooks.drain(..) {
             let _ = unsafe { UnhookWindowsHookEx(hook) };
+        }
+        if std::mem::take(&mut self.hotkey) {
+            if let Some(win) = self.wins.first().copied() {
+                let _ = unsafe { UnregisterHotKey(Some(win), HOTKEY) };
+            }
         }
         let _ = unsafe { KillTimer(self.wins.first().copied(), TIMER_SECOND) };
         if self.to != 0 || ms < self.ms {
@@ -172,16 +181,6 @@ unsafe extern "system" fn key_hook(code: i32, wparam: WPARAM, lparam: LPARAM) ->
         let key = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
         // Keys a program sends (a text expander, an automation) are not the person's.
         if key.vkCode == VK_ESCAPE.0 as u32 && key.flags.0 & LLKHF_INJECTED.0 == 0 && skipped() {
-            return LRESULT(1);
-        }
-    }
-    unsafe { CallNextHookEx(None, code, wparam, lparam) }
-}
-
-unsafe extern "system" fn mouse_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if code >= 0 && matches!(wparam.0 as u32, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN) {
-        let event = unsafe { &*(lparam.0 as *const MSLLHOOKSTRUCT) };
-        if event.flags & MOUSE_INJECTED == 0 && skipped() {
             return LRESULT(1);
         }
     }
@@ -260,6 +259,16 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
     match msg {
         WM_PAINT => unsafe { paint(hwnd) },
         WM_ERASEBKGND => return LRESULT(1),
+        // Esc while an elevated window has the foreground (the hook is not called then), and a
+        // click on any screen: both end the break.
+        WM_HOTKEY => {
+            if wparam.0 == HOTKEY as usize {
+                skipped();
+            }
+        }
+        WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN => {
+            skipped();
+        }
         WM_TIMER => STAGE.with(|stage| {
             if let Ok(mut stage) = stage.try_borrow_mut() {
                 if let Some(stage) = stage.as_mut() {
@@ -287,7 +296,7 @@ fn run(secs: u64, title: String, hint: String, skip: Box<dyn FnOnce() + Send>, r
             .iter()
             .filter_map(|r| {
                 CreateWindowExW(
-                    WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                    WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
                     CLASS,
                     w!(""),
                     WS_POPUP,
@@ -316,19 +325,26 @@ fn run(secs: u64, title: String, hint: String, skip: Box<dyn FnOnce() + Send>, r
                 ms: 0,
                 alpha: 0,
                 skip: Some(skip),
+                hotkey: false,
             };
             // Invisible before it is shown, so nothing flashes.
             stage.set_alpha(0);
             for win in &stage.wins {
                 let _ = ShowWindow(*win, SW_SHOWNOACTIVATE);
             }
-            stage.hooks = [
-                SetWindowsHookExW(WH_KEYBOARD_LL, Some(key_hook), Some(module.into()), 0),
-                SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), Some(module.into()), 0),
-            ]
-            .into_iter()
-            .flatten()
-            .collect();
+            // A click is the window's own now, so only the keyboard is hooked. Esc also comes as
+            // a plain hotkey: Windows calls a low-level hook of this (unelevated) process for
+            // nothing while an elevated window has the foreground, but hotkeys still arrive.
+            stage.hooks = SetWindowsHookExW(WH_KEYBOARD_LL, Some(key_hook), Some(module.into()), 0)
+                .into_iter()
+                .collect();
+            stage.hotkey = stage
+                .wins
+                .first()
+                .is_some_and(|win| RegisterHotKey(Some(*win), HOTKEY, HOT_KEY_MODIFIERS(0), VK_ESCAPE.0 as u32).is_ok());
+            if !stage.hotkey {
+                notch_core::log::line("breaks fade: the Esc hotkey is taken; the keyboard hook is the only way out");
+            }
             stage.fade(255, IN_MS);
             SetTimer(stage.wins.first().copied(), TIMER_SECOND, 1000, None);
             STAGE.set(Some(stage));
@@ -349,6 +365,11 @@ fn run(secs: u64, title: String, hint: String, skip: Box<dyn FnOnce() + Send>, r
             if let Some(stage) = STAGE.take() {
                 for hook in stage.hooks {
                     let _ = UnhookWindowsHookEx(hook);
+                }
+                if stage.hotkey {
+                    if let Some(win) = stage.wins.first().copied() {
+                        let _ = UnregisterHotKey(Some(win), HOTKEY);
+                    }
                 }
                 for win in stage.wins {
                     let _ = DestroyWindow(win);

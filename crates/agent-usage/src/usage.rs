@@ -39,7 +39,6 @@ struct Rec {
     out: u64,
     cr: u64,
     cw: u64,
-    cw1h: u64,
 }
 
 #[derive(Default)]
@@ -345,7 +344,7 @@ impl Store {
                 self.recs.insert(key, Rec {
                     ts, card: st.card.clone(), model: model.to_string(), project: project.clone(),
                     inp: u(&us["input_tokens"]), out: u(&us["output_tokens"]), cr: u(&us["cache_read_input_tokens"]),
-                    cw, cw1h: u(&us["cache_creation"]["ephemeral_1h_input_tokens"]).min(cw),
+                    cw,
                 });
             }
             if side {
@@ -419,7 +418,7 @@ impl Store {
                             let cached = u(&l["cached_input_tokens"]);
                             self.recs.insert(format!("x:{}:{}", path.display(), total), Rec {
                                 ts, card: st.card.clone(), model: st.model.clone(), project,
-                                inp: u(&l["input_tokens"]).saturating_sub(cached), out: u(&l["output_tokens"]), cr: cached, cw: 0, cw1h: 0,
+                                inp: u(&l["input_tokens"]).saturating_sub(cached), out: u(&l["output_tokens"]), cr: cached, cw: 0,
                             });
                         }
                     }
@@ -482,7 +481,7 @@ impl Store {
                 if role != "assistant" || t.iter().sum::<u64>() == 0 {
                     continue;
                 }
-                self.recs.insert(format!("o:{id}"), Rec { ts, card: card.to_string(), model, project: project_of(&dir), inp: t[0], out: t[1] + t[2], cr: t[3], cw: t[4], cw1h: 0 });
+                self.recs.insert(format!("o:{id}"), Rec { ts, card: card.to_string(), model, project: project_of(&dir), inp: t[0], out: t[1] + t[2], cr: t[3], cw: t[4] });
             }
         }
         self.files.insert(path.to_path_buf(), st);
@@ -508,7 +507,7 @@ impl Store {
             let cw = u(&usage["cache_write_tokens"]).min(inp - cached);
             if ts >= cutoff {
                 let key = format!("m:{}", v["id"].as_str().map(str::to_string).unwrap_or_else(|| format!("{}:{ts}", st.session)));
-                this.recs.insert(key, Rec { ts, card: st.card.clone(), model: model.to_string(), project: project_of(&st.cwd), inp: inp - cached - cw, out: u(&usage["output_tokens"]) + u(&usage["reasoning_tokens"]), cr: cached, cw, cw1h: 0 });
+                this.recs.insert(key, Rec { ts, card: st.card.clone(), model: model.to_string(), project: project_of(&st.cwd), inp: inp - cached - cw, out: u(&usage["output_tokens"]) + u(&usage["reasoning_tokens"]), cr: cached, cw });
             }
         };
         match p["kind"].as_str() {

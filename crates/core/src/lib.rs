@@ -12,5 +12,6 @@ pub mod storage;
 pub mod win;
 
 pub use feature::{
-    paused, set_paused, Ctx, Feature, Group, Host, Manifest, Monitor, ShortcutDef, Use, WindowFactory, WindowSpec,
+    paused, set_paused, Anchor, Ctx, Feature, Group, Host, Manifest, Monitor, ShortcutDef, Use, WindowFactory,
+    WindowSpec,
 };

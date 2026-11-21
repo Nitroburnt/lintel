@@ -4,10 +4,11 @@
 // history.json under the feature's data folder (pictures as PNG files beside
 // it). The same thread empties the clipboard after the delay the user set.
 //
-// What is never kept: a copy its source marked as not to be recorded
-// (password managers do), a copy made in or in front of an app on the left-out
-// list, a text that looks like a secret, anything while recording is paused,
-// and whatever the app put on the clipboard itself.
+// What is never kept: a copy made in or in front of a program on the user's
+// own left-out list, anything while recording is paused, and whatever the app
+// put on the clipboard itself. Everything else is recorded, keys and phone
+// numbers included: neither the source's own marks nor the look of a text is
+// looked at.
 //
 // Free of the app: the probe (examples/probe.rs) runs it with a folder and a
 // print function of its own.
@@ -53,13 +54,6 @@ const TEXTS_CAP: usize = 20 << 20;
 const PICTURES_CAP: u64 = 128 << 20;
 const FILES_CAP: usize = 100;
 
-/// Password managers and Windows' own credential prompts: a copy made in one, or while one is in front, is never kept.
-pub const PASSWORD_APPS: &[&str] = &[
-    "keepass.exe", "keepassxc.exe", "1password.exe", "bitwarden.exe", "dashlane.exe", "lastpass.exe", "nordpass.exe",
-    "enpass.exe", "roboform.exe", "keeper.exe", "keeperpasswordmanager.exe", "proton pass.exe", "protonpass.exe",
-    "keeweb.exe", "pwsafe.exe", "strongbox.exe", "consent.exe", "credentialuibroker.exe",
-];
-
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -67,10 +61,9 @@ pub struct Config {
     pub recording: bool,
     /// Pictures and files too, not only text.
     pub media: bool,
-    pub skip_sensitive: bool,
-    /// Program names (`chrome.exe`, lower case) whose copies are left out, besides `PASSWORD_APPS`.
+    /// Program names (`chrome.exe`, lower case) whose copies are left out: the user's own list.
     pub ignored: Vec<String>,
-    /// How many entries that are not pinned.
+    /// How many entries that are not pinned; `usize::MAX` (the user's "Unlimited") keeps them all.
     pub limit: usize,
     /// Entries that are not pinned go after this many days; 0 keeps them.
     pub keep_days: u64,
@@ -91,7 +84,6 @@ impl Default for Config {
         Self {
             recording: true,
             media: true,
-            skip_sensitive: true,
             ignored: Vec::new(),
             limit: 100,
             keep_days: 90,
@@ -119,9 +111,12 @@ impl Config {
         Self {
             recording: on("recording", true),
             media: on("media", true),
-            skip_sensitive: on("skipSensitive", true),
             ignored: names(&s["ignoredApps"]),
-            limit: s["limit"].as_u64().unwrap_or(100).clamp(10, 1000) as usize,
+            // 0 is the "Unlimited" the settings offer: no count cap at all.
+            limit: match s["limit"].as_u64().unwrap_or(100) {
+                0 => usize::MAX,
+                n => n.clamp(10, 1000) as usize,
+            },
             keep_days: s["keepDays"].as_u64().unwrap_or(90).min(3650),
             clean_urls: on("cleanUrls", false),
             clean_extra: names(&s["cleanExtra"]),
@@ -310,8 +305,6 @@ struct Inner {
     hwnd: AtomicIsize,
     /// The clipboard's sequence number when it was last looked at.
     seen: AtomicU32,
-    /// Copies left out since the start because they were or looked secret.
-    skipped: AtomicU32,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -325,7 +318,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 /// What a change of the clipboard turned out to be.
 enum Got {
-    Skip(&'static str, bool),
+    Skip(&'static str),
     Files(Vec<String>),
     Png(Vec<u8>),
     Bitmap(Vec<u8>),
@@ -382,8 +375,11 @@ impl Inner {
     }
 
     /// Age, count and size: what is over goes, oldest first; a pinned entry never does.
+    /// The user's "Unlimited" drops the count and the byte budgets: then only the age they set
+    /// (if any) ever takes an entry away.
     fn trim(&self, entries: &mut Vec<Entry>) {
         let cfg = self.config();
+        let unlimited = cfg.limit == usize::MAX;
         let now = now_ms();
         let (mut count, mut texts, mut pictures) = (0usize, 0usize, 0u64);
         entries.retain(|e| {
@@ -394,7 +390,7 @@ impl Inner {
             texts += e.text.len();
             pictures += e.size;
             let fresh = cfg.keep_days == 0 || now.saturating_sub(e.at) < cfg.keep_days * 86_400_000;
-            fresh && count <= cfg.limit && texts <= TEXTS_CAP && pictures <= PICTURES_CAP
+            fresh && (unlimited || (count <= cfg.limit && texts <= TEXTS_CAP && pictures <= PICTURES_CAP))
         });
     }
 
@@ -409,12 +405,9 @@ impl Inner {
         out
     }
 
-    fn skip(&self, why: &'static str, secret: bool, formats: &[u32]) {
-        if secret {
-            self.skipped.fetch_add(1, Ordering::Relaxed);
-        }
+    fn skip(&self, why: &'static str, formats: &[u32]) {
         let formats: Vec<String> = formats.iter().map(|&f| clip::format_name(f)).collect();
-        (self.emit)("skipped", json!({ "why": why, "secret": secret, "formats": formats }));
+        (self.emit)("skipped", json!({ "why": why, "formats": formats }));
     }
 
     // ── A change of the clipboard (the listener's thread) ───────────────────────
@@ -431,27 +424,22 @@ impl Inner {
         }
         let cfg = self.config();
         if !cfg.recording || (self.paused)() {
-            return self.skip("recording is paused", false, &[]);
+            return self.skip("recording is paused", &[]);
         }
 
         let (owner, front) = source();
-        let left_out = |exe: &Option<String>| {
-            exe.as_deref().map(file_name).is_some_and(|name| PASSWORD_APPS.contains(&name.as_str()) || cfg.ignored.contains(&name))
-        };
+        let left_out =
+            |exe: &Option<String>| exe.as_deref().map(file_name).is_some_and(|name| cfg.ignored.contains(&name));
         // Read and close: nothing below this block holds the clipboard.
         let (formats, got) = {
             let Ok(clipboard) = clip::open() else { return };
             let formats = clipboard.formats();
-            let has = |name: &str| formats.contains(&clip::format(name));
-            let zero = |name: &str| clipboard.bytes(clip::format(name), 64).is_some_and(|b| b.iter().all(|&x| x == 0));
             let png = clip::format("PNG");
-            let got = if has(clip::EXCLUDE) || has("Clipboard Viewer Ignore") || zero(clip::NO_HISTORY) || zero(clip::NO_CLOUD) {
-                // The mark of a password manager: nothing else is even read.
-                Got::Skip("marked by its source as not to be recorded", true)
-            } else if left_out(&owner) || left_out(&front) {
-                Got::Skip("copied in an app that is left out", true)
+            let got = if left_out(&owner) || left_out(&front) {
+                // The only filter left: the user's own list of programs.
+                Got::Skip("copied in an app that is left out")
             } else if formats.contains(&clip::CF_HDROP) {
-                if cfg.media { Got::Files(clipboard.files()) } else { Got::Skip("files are not recorded", false) }
+                if cfg.media { Got::Files(clipboard.files()) } else { Got::Skip("files are not recorded") }
             } else if formats.contains(&clip::CF_UNICODETEXT) && !formats.contains(&png) {
                 // Text first: a spreadsheet or a document also offers a picture of what was copied.
                 // A real picture (a browser's "Copy image", a screenshot) comes with a PNG or without text.
@@ -460,16 +448,16 @@ impl Inner {
                         let rewrite = cfg.clean_urls && urls::is_web(&text) && only_text(&clipboard, &formats);
                         Got::Text(text, rewrite)
                     }
-                    None => Got::Skip("the text is longer than a million characters", false),
+                    None => Got::Skip("the text is longer than a million characters"),
                 }
             } else if !cfg.media {
-                Got::Skip("pictures are not recorded", false)
+                Got::Skip("pictures are not recorded")
             } else if let Some(bytes) = clipboard.bytes(png, PNG_CAP) {
                 Got::Png(bytes)
             } else if let Some(bytes) = clipboard.bytes(clip::CF_DIB, BITMAP_CAP) {
                 Got::Bitmap(bytes)
             } else {
-                Got::Skip("nothing the history keeps (or a picture too large)", false)
+                Got::Skip("nothing the history keeps (or a picture too large)")
             };
             (formats, got)
         };
@@ -481,20 +469,17 @@ impl Inner {
         }
         let mut picture = None;
         match got {
-            Got::Skip(why, secret) => return self.skip(why, secret, &formats),
+            Got::Skip(why) => return self.skip(why, &formats),
             Got::Files(paths) => {
                 if paths.is_empty() {
-                    return self.skip("no file in the copy", false, &formats);
+                    return self.skip("no file in the copy", &formats);
                 }
                 entry.kind = Some(Kind::Files);
                 entry.text = paths.into_iter().take(FILES_CAP).collect::<Vec<_>>().join("\n");
             }
             Got::Text(text, rewrite) => {
                 if text.trim().is_empty() {
-                    return self.skip("empty text", false, &formats);
-                }
-                if cfg.skip_sensitive && urls::looks_sensitive(&text) {
-                    return self.skip("looks like a key", true, &formats);
+                    return self.skip("empty text", &formats);
                 }
                 entry.text = text;
                 if urls::is_web(&entry.text) {
@@ -524,7 +509,7 @@ impl Inner {
                     _ => None,
                 };
                 let Some((png, (width, height))) = png.and_then(|png| png_size(&png).map(|size| (png, size))) else {
-                    return self.skip("a picture in a form the history cannot keep", false, &formats);
+                    return self.skip("a picture in a form the history cannot keep", &formats);
                 };
                 entry.kind = Some(Kind::Image);
                 (entry.width, entry.height, entry.size) = (width, height, png.len() as u64);
@@ -694,7 +679,6 @@ impl History {
             config: Mutex::new(config),
             hwnd: AtomicIsize::new(0),
             seen: AtomicU32::new(0),
-            skipped: AtomicU32::new(0),
             thread: Mutex::new(None),
         });
         {
@@ -754,11 +738,6 @@ impl History {
     /// The entries with these ids, in the order of the list.
     pub fn picked(&self, ids: &[String]) -> Vec<Entry> {
         self.entries().into_iter().filter(|e| ids.contains(&e.id)).collect()
-    }
-
-    /// Copies left out since the start because they were, or looked, secret.
-    pub fn skipped(&self) -> u32 {
-        self.0.skipped.load(Ordering::Relaxed)
     }
 
     /// Where the PNG of a picture entry is.
@@ -836,5 +815,46 @@ impl History {
         if wanted {
             self.0.clear_clipboard(occasion);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn history(limit: usize) -> Inner {
+        Inner {
+            dir: std::env::temp_dir().join("lintel-clipboard-test"),
+            emit: Arc::new(|_, _| {}),
+            paused: || false,
+            config: Mutex::new(Config { limit, keep_days: 0, ..Config::default() }),
+            entries: Mutex::new(Vec::new()),
+            hwnd: AtomicIsize::new(0),
+            seen: AtomicU32::new(0),
+            thread: Mutex::new(None),
+        }
+    }
+
+    fn copies(n: usize) -> Vec<Entry> {
+        (0..n).map(|i| Entry { id: i.to_string(), text: format!("copy {i}"), at: now_ms(), ..Default::default() }).collect()
+    }
+
+    #[test]
+    fn unlimited_keeps_every_entry_while_a_count_still_trims() {
+        let mut many = copies(1200);
+        history(usize::MAX).trim(&mut many);
+        assert_eq!(many.len(), 1200);
+
+        let mut capped = copies(1200);
+        history(100).trim(&mut capped);
+        assert_eq!(capped.len(), 100);
+        assert_eq!(capped[99].id, "99");
+    }
+
+    #[test]
+    fn a_limit_of_zero_in_the_settings_is_unlimited() {
+        assert_eq!(Config::from_settings(&json!({ "limit": 0 })).limit, usize::MAX);
+        assert_eq!(Config::from_settings(&json!({ "limit": 250 })).limit, 250);
+        assert_eq!(Config::from_settings(&json!({})).limit, 100);
     }
 }

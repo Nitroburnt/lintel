@@ -3548,6 +3548,17 @@
    "ru": "Поиск по настройкам",
    "id": "Cari pengaturan"
   },
+  "Resize sidebar": {
+   "zh-Hans": "调整侧边栏宽度",
+   "hi": "साइडबार का आकार बदलें",
+   "es": "Cambiar el ancho de la barra lateral",
+   "ar": "تغيير عرض الشريط الجانبي",
+   "fr": "Redimensionner la barre latérale",
+   "bn": "সাইডবারের আকার বদলান",
+   "pt-BR": "Redimensionar a barra lateral",
+   "ru": "Изменить ширину боковой панели",
+   "id": "Ubah ukuran bilah sisi"
+  },
   "Off": {
    "zh-Hans": "关",
    "hi": "बंद",

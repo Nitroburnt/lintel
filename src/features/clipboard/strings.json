@@ -564,17 +564,17 @@
       "ru": "Записывать скопированное",
       "id": "Rekam yang saya salin"
     },
-    "Kept on this PC only. Copies that a password manager marks as secret are never recorded.": {
-      "en": "Kept on this PC only. Copies that a password manager marks as secret are never recorded.",
-      "zh-Hans": "仅保存在此电脑上。密码管理器标记为机密的复制内容绝不会被记录。",
-      "hi": "केवल इसी पीसी पर रखा जाता है। पासवर्ड मैनेजर जिन कॉपी को गुप्त चिह्नित करता है वे कभी रिकॉर्ड नहीं होतीं।",
-      "es": "Se guarda solo en este PC. Las copias que un gestor de contraseñas marca como secretas nunca se guardan.",
-      "ar": "يُحفظ على هذا الكمبيوتر فقط. لا تُسجَّل أبدًا النُّسخ التي يعلّمها مدير كلمات المرور على أنها سرية.",
-      "fr": "Conservé uniquement sur ce PC. Les copies qu’un gestionnaire de mots de passe marque comme secrètes ne sont jamais enregistrées.",
-      "bn": "শুধু এই পিসিতে রাখা হয়। পাসওয়ার্ড ম্যানেজার যেসব কপিকে গোপন হিসেবে চিহ্নিত করে সেগুলো কখনও রেকর্ড হয় না।",
-      "pt-BR": "Mantido somente neste PC. Cópias que um gerenciador de senhas marca como secretas nunca são registradas.",
-      "ru": "Хранится только на этом ПК. Копии, помеченные менеджером паролей как секретные, никогда не записываются.",
-      "id": "Disimpan hanya di PC ini. Salinan yang ditandai rahasia oleh pengelola kata sandi tidak pernah direkam."
+    "Kept on this PC only. Everything you copy is recorded while recording is on.": {
+      "en": "Kept on this PC only. Everything you copy is recorded while recording is on.",
+      "zh-Hans": "仅保存在此电脑上。录制开启时，你复制的所有内容都会被记录。",
+      "hi": "केवल इसी पीसी पर रखा जाता है। रिकॉर्डिंग चालू रहने पर आप जो भी कॉपी करते हैं वह रिकॉर्ड होता है।",
+      "es": "Se guarda solo en este PC. Todo lo que copias se guarda mientras la grabación está activa.",
+      "ar": "يُحفظ على هذا الكمبيوتر فقط. كل ما تنسخه يُسجَّل ما دام التسجيل مفعّلًا.",
+      "fr": "Conservé uniquement sur ce PC. Tout ce que vous copiez est enregistré tant que l’enregistrement est actif.",
+      "bn": "শুধু এই পিসিতে রাখা হয়। রেকর্ডিং চালু থাকলে আপনি যা কপি করেন সবই রেকর্ড হয়।",
+      "pt-BR": "Mantido somente neste PC. Tudo o que você copia é registrado enquanto a gravação está ativa.",
+      "ru": "Хранится только на этом ПК. Всё, что вы копируете, записывается, пока запись включена.",
+      "id": "Disimpan hanya di PC ini. Semua yang Anda salin direkam selama perekaman aktif."
     },
     "Record images and files too": {
       "en": "Record images and files too",
@@ -600,17 +600,17 @@
       "ru": "Исключённые приложения",
       "id": "Aplikasi yang dikecualikan"
     },
-    "Program names separated by commas, such as notepad.exe. Password managers are always left out.": {
-      "en": "Program names separated by commas, such as notepad.exe. Password managers are always left out.",
-      "zh-Hans": "程序名称以逗号分隔，例如 notepad.exe。密码管理器始终被排除。",
-      "hi": "प्रोग्राम के नाम अल्पविराम से अलग करें, जैसे notepad.exe। पासवर्ड मैनेजर हमेशा छोड़े जाते हैं।",
-      "es": "Nombres de programas separados por comas, como notepad.exe. Los gestores de contraseñas siempre se excluyen.",
-      "ar": "أسماء البرامج مفصولة بفواصل، مثل notepad.exe. تُستثنى مديرات كلمات المرور دائمًا.",
-      "fr": "Noms de programmes séparés par des virgules, comme notepad.exe. Les gestionnaires de mots de passe sont toujours exclus.",
-      "bn": "প্রোগ্রামের নাম কমা দিয়ে আলাদা করুন, যেমন notepad.exe। পাসওয়ার্ড ম্যানেজার সবসময় বাদ থাকে।",
-      "pt-BR": "Nomes de programas separados por vírgulas, como notepad.exe. Gerenciadores de senhas são sempre ignorados.",
-      "ru": "Имена программ через запятую, например notepad.exe. Менеджеры паролей всегда исключены.",
-      "id": "Nama program dipisahkan koma, misalnya notepad.exe. Pengelola kata sandi selalu dikecualikan."
+    "Program names separated by commas, such as notepad.exe.": {
+      "en": "Program names separated by commas, such as notepad.exe.",
+      "zh-Hans": "程序名称以逗号分隔，例如 notepad.exe。",
+      "hi": "प्रोग्राम के नाम अल्पविराम से अलग करें, जैसे notepad.exe।",
+      "es": "Nombres de programas separados por comas, como notepad.exe.",
+      "ar": "أسماء البرامج مفصولة بفواصل، مثل notepad.exe.",
+      "fr": "Noms de programmes séparés par des virgules, comme notepad.exe.",
+      "bn": "প্রোগ্রামের নাম কমা দিয়ে আলাদা করুন, যেমন notepad.exe।",
+      "pt-BR": "Nomes de programas separados por vírgulas, como notepad.exe.",
+      "ru": "Имена программ через запятую, например notepad.exe.",
+      "id": "Nama program dipisahkan koma, misalnya notepad.exe."
     },
     "Entries to keep": {
       "en": "Entries to keep",
@@ -659,6 +659,18 @@
       "pt-BR": "Para sempre",
       "ru": "Бессрочно",
       "id": "Selamanya"
+    },
+    "Unlimited": {
+      "en": "Unlimited",
+      "zh-Hans": "无限",
+      "hi": "असीमित",
+      "es": "Sin límite",
+      "ar": "بلا حدود",
+      "fr": "Sans limite",
+      "bn": "সীমাহীন",
+      "pt-BR": "Sem limite",
+      "ru": "Без ограничений",
+      "id": "Tanpa batas"
     },
     "1 day": {
       "en": "1 day",
@@ -972,53 +984,29 @@
       "ru": "Удалено",
       "id": "Dihapus"
     },
-    "Leave out text that looks like a key": {
-      "en": "Leave out text that looks like a key",
-      "zh-Hans": "忽略看起来像密钥的文本",
-      "hi": "कुंजी जैसे दिखने वाले टेक्स्ट को छोड़ें",
-      "es": "Omitir texto que parece una clave",
-      "ar": "تجاهل النص الذي يبدو كمفتاح",
-      "fr": "Ignorer le texte qui ressemble à une clé",
-      "bn": "কী-এর মতো দেখতে টেক্সট বাদ দিন",
-      "pt-BR": "Ignorar texto que parece uma chave",
-      "ru": "Пропускать текст, похожий на ключ",
-      "id": "Lewati teks yang tampak seperti kunci"
+    "{count} characters": {
+      "en": "{count} characters",
+      "zh-Hans": "{count} 个字符",
+      "hi": "{count} वर्ण",
+      "es": "{count} caracteres",
+      "ar": "{count} حرفًا",
+      "fr": "{count} caractères",
+      "bn": "{count} অক্ষর",
+      "pt-BR": "{count} caracteres",
+      "ru": "Символов: {count}",
+      "id": "{count} karakter"
     },
-    "Only text that looks like a real key: a known key prefix, a long random string or a private key. Ordinary text and code stay.": {
-      "en": "Only text that looks like a real key: a known key prefix, a long random string or a private key. Ordinary text and code stay.",
-      "zh-Hans": "仅限看起来像真实密钥的文本：已知密钥前缀、长随机字符串或私钥。普通文本和代码会保留。",
-      "hi": "केवल असली कुंजी जैसा टेक्स्ट: जाना-पहचाना कुंजी उपसर्ग, लंबी यादृच्छिक स्ट्रिंग या निजी कुंजी। सामान्य टेक्स्ट और कोड रहते हैं।",
-      "es": "Solo texto que parece una clave real: un prefijo de clave conocido, una cadena aleatoria larga o una clave privada. El texto normal y el código se conservan.",
-      "ar": "فقط النص الذي يبدو كمفتاح حقيقي: بادئة مفتاح معروفة أو سلسلة عشوائية طويلة أو مفتاح خاص. يبقى النص العادي والشيفرة.",
-      "fr": "Seulement le texte qui ressemble à une vraie clé : un préfixe de clé connu, une longue chaîne aléatoire ou une clé privée. Le texte ordinaire et le code restent.",
-      "bn": "শুধু আসল কী-এর মতো টেক্সট: পরিচিত কী প্রিফিক্স, লম্বা এলোমেলো স্ট্রিং বা প্রাইভেট কী। সাধারণ টেক্সট ও কোড থাকে।",
-      "pt-BR": "Apenas texto que parece uma chave real: um prefixo de chave conhecido, uma sequência aleatória longa ou uma chave privada. Texto comum e código ficam.",
-      "ru": "Только текст, похожий на настоящий ключ: известный префикс ключа, длинная случайная строка или закрытый ключ. Обычный текст и код сохраняются.",
-      "id": "Hanya teks yang tampak seperti kunci asli: awalan kunci yang dikenal, string acak panjang, atau kunci privat. Teks biasa dan kode tetap disimpan."
-    },
-    "1 copy left out as a key": {
-      "en": "1 copy left out as a key",
-      "zh-Hans": "1 个复制内容因像密钥被忽略",
-      "hi": "1 कॉपी कुंजी जैसी होने से छोड़ी गई",
-      "es": "1 copia omitida por parecer una clave",
-      "ar": "تم تجاهل نسخة واحدة لأنها تبدو كمفتاح",
-      "fr": "1 copie ignorée car elle ressemble à une clé",
-      "bn": "১টি কপি কী-এর মতো হওয়ায় বাদ দেওয়া হয়েছে",
-      "pt-BR": "1 cópia omitida por parecer uma chave",
-      "ru": "1 копия пропущена как ключ",
-      "id": "1 salinan dilewati karena tampak seperti kunci"
-    },
-    "{count} copies left out as a key": {
-      "en": "{count} copies left out as a key",
-      "zh-Hans": "{count} 个复制内容因像密钥被忽略",
-      "hi": "{count} कॉपी कुंजी जैसी होने से छोड़ी गईं",
-      "es": "{count} copias omitidas por parecer claves",
-      "ar": "تم تجاهل {count} نسخ لأنها تبدو كمفاتيح",
-      "fr": "{count} copies ignorées car elles ressemblent à des clés",
-      "bn": "{count}টি কপি কী-এর মতো হওয়ায় বাদ দেওয়া হয়েছে",
-      "pt-BR": "{count} cópias omitidas por parecerem chaves",
-      "ru": "{count} копий пропущено как ключи",
-      "id": "{count} salinan dilewati karena tampak seperti kunci"
+    "Showing the first {count} characters": {
+      "en": "Showing the first {count} characters",
+      "zh-Hans": "仅显示前 {count} 个字符",
+      "hi": "पहले {count} वर्ण दिखाए जा रहे हैं",
+      "es": "Mostrando los primeros {count} caracteres",
+      "ar": "يُعرض أول {count} حرفًا",
+      "fr": "Affichage des {count} premiers caractères",
+      "bn": "প্রথম {count}টি অক্ষর দেখানো হচ্ছে",
+      "pt-BR": "Mostrando os primeiros {count} caracteres",
+      "ru": "Показаны первые {count} символов",
+      "id": "Menampilkan {count} karakter pertama"
     }
   }
 }

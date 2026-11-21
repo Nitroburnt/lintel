@@ -10,7 +10,13 @@ import { mergeStrings, t } from "../i18n/i18n";
 import { Bridge, onEvent, type FeatureInfo } from "./bridge";
 import { collectVoice, type FeatureCtx, type FeatureModule, type IslandApi, type Value, type VoiceEntry } from "./feature";
 
-const modules = import.meta.glob("../features/*/index.ts", { eager: true });
+// One chunk a feature, read when a page asks for it: the island and Settings need
+// every feature, a feature window only its own, so its window does not load the
+// code of the other sixty (docs/ARCHITECTURE.md §2.3).
+const modules = import.meta.glob("../features/*/index.ts") as Record<
+  string,
+  () => Promise<{ default: FeatureModule }>
+>;
 
 // Feature strings are a chunk each, read when a window needs them, not at import:
 // the island draws only the features that run, so the tables of the rest (all ten
@@ -23,6 +29,48 @@ const tables = import.meta.glob("../features/*/strings.json") as Record<
 const merged = new Set<string>();
 
 const idOfTable = (path: string) => path.slice("../features/".length).split("/")[0];
+
+// The registry's own order (by id), so section, command-bar and voice order do not
+// depend on which chunk arrived first.
+const modulePaths: string[] = Object.keys(modules).sort();
+const pathOf = new Map(modulePaths.map((path) => [idOfTable(path), path]));
+const loaded = new Map<string, FeatureModule>();
+
+/** Reads the modules of `paths` not read yet, all at once, then refills `FEATURES` in order. */
+async function loadModules(paths: readonly string[]): Promise<void> {
+  const todo = paths.filter((path) => !loaded.has(idOfTable(path)));
+  if (todo.length === 0) return;
+  const read = await Promise.all(
+    todo.map(async (path) => {
+      try {
+        return [idOfTable(path), (await modules[path]()).default] as const;
+      } catch (err) {
+        console.error(`[feature ${idOfTable(path)}] failed to load`, err);
+        return null;
+      }
+    }),
+  );
+  let added = false;
+  for (const module of read) {
+    if (!module) continue;
+    loaded.set(module[0], module[1]);
+    added = true;
+  }
+  if (!added) return;
+  // The same array, refilled: everything that kept a reference to it stays right.
+  FEATURES.length = 0;
+  for (const path of modulePaths) {
+    const feature = loaded.get(idOfTable(path));
+    if (feature) FEATURES.push(feature);
+  }
+}
+
+/** Reads one feature's module. A feature window's page needs only its own. */
+export async function loadFeature(id: string): Promise<FeatureModule | undefined> {
+  const path = pathOf.get(id);
+  if (path) await loadModules([path]);
+  return loaded.get(id);
+}
 
 /** Merges the tables not merged yet: those of `only`, or every one of them. */
 async function mergeTables(only?: ReadonlySet<string>): Promise<void> {
@@ -49,7 +97,12 @@ export function loadAllStrings(): Promise<void> {
   return mergeTables();
 }
 
-export const FEATURES: FeatureModule[] = Object.values(modules).map((m) => (m as { default: FeatureModule }).default);
+/**
+ * The features read so far, in the registry's order (`loadFeatures()` reads them
+ * all: nothing here is read until a page boots). Read it at the call, never at
+ * import: it is filled once the page has asked for the features.
+ */
+export const FEATURES: FeatureModule[] = [];
 
 export function featureById(id: string): FeatureModule | undefined {
   return FEATURES.find((f) => f.id === id);
@@ -121,6 +174,28 @@ export function featureCtx(id: string): FeatureCtx {
   };
 }
 
+/**
+ * A feature's context that answers at once with nothing: no `feature_call`,
+ * no settings, an inert island. Settings search builds each page's labels with
+ * it, so looking for an option never starts a scan or asks the Rust side.
+ */
+export function quietCtx(id: string): FeatureCtx {
+  return {
+    id,
+    call: <T>() => Promise.resolve<T | null>(null),
+    on: () => () => {},
+    settings: {
+      get: async () => ({}),
+      patch: async () => {},
+      onChange: () => () => {},
+    },
+    get island() {
+      return inert;
+    },
+    t,
+  };
+}
+
 // ── Which features are on ─────────────────────────────────────────────────────
 
 let infos: FeatureInfo[] = [];
@@ -151,6 +226,9 @@ export async function loadFeatures(): Promise<readonly FeatureInfo[]> {
     // What runs is what this window draws, and what it draws needs its strings:
     // a feature switched on later is read here, before the watchers redraw.
     await mergeTables(new Set(infos.filter((f) => f.running).map((f) => f.id)));
+    // The island draws every running feature and names the others (an icon in the
+    // command bar, its page in Settings): this window wants them all, in parallel.
+    await loadModules(modulePaths);
   };
   loading ??= (async () => {
     await read();

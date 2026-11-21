@@ -1,6 +1,6 @@
 // Clipboard — what was copied, kept on this machine and brought back with a
-// click: history, the filters that keep secrets out of it, the auto clear, a
-// plain-text paste and the cleaning of tracking links.
+// click: history, the auto clear, a plain-text paste and the cleaning of
+// tracking links. Everything that is copied is recorded.
 //
 // The contract is docs/ARCHITECTURE.md §2: nothing runs before `start`,
 // everything is gone after `stop`, every command arrives through `call`. The
@@ -35,8 +35,9 @@ static MANIFEST: Manifest = Manifest {
         ShortcutDef { id: "paste-plain", label: "Paste as plain text", default: Some("Ctrl+Alt+Shift+V") },
     ],
     tray: &[],
-    // clearAfter: seconds, 0 = never. keepDays: 0 = for good. ignoredApps, cleanExtra: names separated by commas.
-    defaults: r#"{ "recording": true, "media": true, "skipSensitive": true, "ignoredApps": "", "limit": 100, "keepDays": 90, "copyOnly": false, "notify": false, "cleanUrls": false, "cleanExtra": "", "clearAfter": 0, "clearOnLock": false, "clearOnSleep": false, "clearOnDisplayOff": false, "clearWindowsHistory": false }"#,
+    // clearAfter: seconds, 0 = never. limit: 0 = no limit. keepDays: 0 = for good.
+    // ignoredApps, cleanExtra: names separated by commas.
+    defaults: r#"{ "recording": true, "media": true, "ignoredApps": "", "limit": 100, "keepDays": 90, "copyOnly": false, "notify": false, "cleanUrls": false, "cleanExtra": "", "clearAfter": 0, "clearOnLock": false, "clearOnSleep": false, "clearOnDisplayOff": false, "clearWindowsHistory": false }"#,
 };
 
 /// The last window in front that was not one of the app's: where a click on an
@@ -186,7 +187,6 @@ impl Feature for Clipboard {
         match method {
             "list" => Ok(json!({
                 "entries": history.entries().iter().map(view).collect::<Vec<_>>(),
-                "skipped": history.skipped(),
                 "recording": history.config().recording && !cx.paused(),
             })),
             // A click on an entry: it goes on the clipboard and, unless the user
@@ -213,15 +213,17 @@ impl Feature for Clipboard {
                 history.clear(args["all"].as_bool() == Some(true));
                 Ok(Value::Null)
             }
-            // A picture entry's own picture; for files, the first file's picture or icon.
+            // A picture entry's own picture; for files, the first file's picture or icon. `size` is the side
+            // of the square the Shell draws it in: the row asks for 128, the preview for more.
             "thumb" => {
                 let entry = one()?;
+                let px = args["size"].as_u64().unwrap_or(128).clamp(32, 1024) as u32;
                 let png = match entry.kind() {
-                    Kind::Image => svc_shell::thumbnail(&history.image_path(&entry), 128)?,
+                    Kind::Image => svc_shell::thumbnail(&history.image_path(&entry), px)?,
                     Kind::Files => {
                         // Files that are gone have no picture: the row keeps its icon, and nothing is an error.
                         let Ok(path) = first_file(&entry) else { return Ok(Value::Null) };
-                        svc_shell::thumbnail(Path::new(path), 128).or_else(|_| svc_shell::icon(path, 32))?
+                        svc_shell::thumbnail(Path::new(path), px).or_else(|_| svc_shell::icon(path, 32))?
                     }
                     _ => return Err("That entry has no picture.".into()),
                 };

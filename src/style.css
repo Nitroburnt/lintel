@@ -409,6 +409,16 @@ html[data-place="float"] #island.outlined::after {
   display: contents;
 }
 
+/* A section tab being dragged along the header, and the one whose place it will take. */
+.isl-tabs .tab.dragging {
+  opacity: 0.4;
+}
+
+.isl-tabs .tab.drop {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .isl-head-right {
   display: flex;
   align-items: center;

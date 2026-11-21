@@ -35,6 +35,8 @@ pub struct Display {
     pub y: i32,
     pub w: i32,
     pub h: i32,
+    /// The work area (the taskbar left out), physical pixels: left, top, right, bottom.
+    pub work: (i32, i32, i32, i32),
     hmon: isize,
 }
 
@@ -70,6 +72,7 @@ unsafe extern "system" fn each(hmon: HMONITOR, _: HDC, _: *mut RECT, data: LPARA
         info.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
         if GetMonitorInfoW(hmon, &mut info as *mut _ as *mut MONITORINFO).as_bool() {
             let r = info.monitorInfo.rcMonitor;
+            let area = info.monitorInfo.rcWork;
             let id = String::from_utf16_lossy(&info.szDevice).trim_end_matches('\0').to_string();
             out.push(Display {
                 name: id.clone(),
@@ -80,6 +83,7 @@ unsafe extern "system" fn each(hmon: HMONITOR, _: HDC, _: *mut RECT, data: LPARA
                 y: r.top,
                 w: r.right - r.left,
                 h: r.bottom - r.top,
+                work: (area.left, area.top, area.right, area.bottom),
                 hmon: hmon.0 as isize,
             });
         }
@@ -178,11 +182,11 @@ fn with_physical<R>(d: &Display, f: impl FnOnce(windows::Win32::Foundation::HAND
     }
 }
 
-/// (current, max) luminance; `Ok(None)` = a handle but no answer to the read.
-fn ddc_read(d: &Display) -> Option<Option<(u32, u32)>> {
+/// (current, max) of one VCP code; `Ok(None)` = a handle but no answer to the read.
+fn ddc_read_code(d: &Display, code: u8) -> Option<Option<(u32, u32)>> {
     with_physical(d, |h| unsafe {
         let (mut cur, mut max) = (0u32, 0u32);
-        if GetVCPFeatureAndVCPFeatureReply(h, 0x10, None, &mut cur, Some(&mut max)) != 0 {
+        if GetVCPFeatureAndVCPFeatureReply(h, code, None, &mut cur, Some(&mut max)) != 0 {
             Some((cur, if max == 0 { 100 } else { max }))
         } else {
             None
@@ -190,9 +194,34 @@ fn ddc_read(d: &Display) -> Option<Option<(u32, u32)>> {
     })
 }
 
+/// (current, max) luminance; `Ok(None)` = a handle but no answer to the read.
+fn ddc_read(d: &Display) -> Option<Option<(u32, u32)>> {
+    ddc_read_code(d, 0x10)
+}
+
 fn ddc_write(d: &Display, percent: u32) -> bool {
     let max = DDC_MAX.lock().unwrap().as_ref().and_then(|m| m.get(&d.id).copied()).unwrap_or(100);
     with_physical(d, |h| unsafe { SetVCPFeature(h, 0x10, percent.min(100) * max / 100) != 0 }).unwrap_or(false)
+}
+
+/// Contrast (VCP 0x12), 0–100. A built-in panel has no such control; `None` also
+/// when the monitor has a DDC handle but will not answer.
+pub fn read_contrast(d: &Display) -> Option<u8> {
+    if d.internal {
+        return None;
+    }
+    let (cur, max) = ddc_read_code(d, 0x12)??;
+    // A 0 on a read that claims a range is the firmware (the same quirk the luminance
+    // read has on some panels), not a screen with no contrast at all: the level stays ours.
+    (cur > 0).then(|| (cur * 100 / max).min(100) as u8)
+}
+
+/// One contrast write. True when the monitor took it.
+pub fn write_contrast(d: &Display, percent: u8) -> bool {
+    if d.internal {
+        return false;
+    }
+    with_physical(d, |h| unsafe { SetVCPFeature(h, 0x12, percent.min(100) as u32) != 0 }).unwrap_or(false)
 }
 
 // ── WMI (built-in panel) ──────────────────────────────────────────────────────
@@ -295,7 +324,14 @@ pub fn probe(d: &Display) -> (Method, Option<u8>) {
     match ddc_read(d) {
         Some(Some((cur, max))) => {
             DDC_MAX.lock().unwrap().get_or_insert_with(Default::default).insert(d.id.clone(), max);
-            (Method::Ddc, Some((cur * 100 / max).min(100) as u8))
+            // A 0 on a read that claims a range is the firmware, not a black screen: some panels
+            // (a Samsung LS24D300 here) answer 0 to luminance on every read while their other codes
+            // reply correctly. `DdcWrite` already means "writes are tried, the level stays ours".
+            if cur == 0 && max > 0 {
+                (Method::DdcWrite, None)
+            } else {
+                (Method::Ddc, Some((cur * 100 / max).min(100) as u8))
+            }
         }
         Some(None) => (Method::DdcWrite, None),
         None => (Method::None, None),

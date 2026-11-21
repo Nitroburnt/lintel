@@ -51,6 +51,7 @@ export const PLAN_TEXT = {
   get resets() { return t("Resets"); },
   get resetting() { return t("Resetting…"); },
   inHM: (h: number, m: number) => t("in {h} h {m}", { h, m }),
+  inH: (h: number) => t("in {h} h", { h }),
   inM: (m: number) => t("in {m} min", { m }),
   available: (n: number) => t("{n} available", { n }),
   until: (date: string) => t(" · until {date}", { date }),
@@ -167,7 +168,9 @@ export function resetLabel(w: PlanWindow, weekly: boolean, now = Date.now()): st
   }
   const hours = Math.floor(secs / 3600);
   const mins = Math.floor((secs % 3600) / 60);
-  return hours > 0 ? PLAN_TEXT.inHM(hours, mins) : PLAN_TEXT.inM(mins);
+  // An exact hour is "in 1 h", not "in 1 h 0"; under a minute is "in 1 min", not "in 0 min".
+  if (hours === 0) return PLAN_TEXT.inM(Math.max(1, mins));
+  return mins === 0 ? PLAN_TEXT.inH(hours) : PLAN_TEXT.inHM(hours, mins);
 }
 
 /** The Claude card's subtitle. */

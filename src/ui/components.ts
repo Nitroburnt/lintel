@@ -119,6 +119,10 @@ export interface SliderOpts {
   onChange: (fraction: number) => void;
   /** A drag began (true) or ended: in the island, hold it for as long. */
   onDrag?: (dragging: boolean) => void;
+  /** The mouse wheel steps it 5 % a notch, up is more (`onChange` fires for each step). */
+  wheel?: boolean;
+  /** How much of the range one wheel notch moves it; 0.05 when not given. */
+  wheelStep?: number;
 }
 
 /**
@@ -170,6 +174,36 @@ export function slider(fraction: number, o: SliderOpts): HTMLElement {
     setMeter(el, v);
     o.onChange(v);
   });
+  if (o.wheel) {
+    const step = o.wheelStep ?? 0.05;
+    // A mouse sends about 100 px a notch, a trackpad many small deltas: both add up here, so a
+    // trackpad moves it smoothly instead of once per event. A wheel pushed forward (up the page,
+    // `deltaY` negative) raises the value, as it raises every other slider.
+    let acc = 0;
+    el.addEventListener(
+      "wheel",
+      (e) => {
+        if (off() || e.deltaY === 0) return;
+        e.preventDefault();
+        acc += e.deltaY;
+        let notches = 0;
+        while (acc <= -100) {
+          acc += 100;
+          notches -= 1;
+        }
+        while (acc >= 100) {
+          acc -= 100;
+          notches += 1;
+        }
+        if (!notches) return;
+        const now = Number(el.style.getPropertyValue("--v") || 0);
+        const v = Math.round(Math.max(0, Math.min(1, now - notches * step)) * 1000) / 1000;
+        setMeter(el, v);
+        o.onChange(v);
+      },
+      { passive: false },
+    );
+  }
   return el;
 }
 

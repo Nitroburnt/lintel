@@ -517,13 +517,13 @@
   text-transform: uppercase;
 }
 
-/* ── Settings shell: sidebar 200, page max 560 ────────────────────────── */
+/* ── Settings shell: sidebar 200, page fills the window ───────────────── */
 
 .sidebar {
   flex: none;
-  width: 200px;
+  width: var(--sidebar-w, 200px);
+  max-width: 45%;
   padding: var(--s-2);
-  border-right: 1px solid var(--hairline);
   background: var(--panel);
   overflow-y: auto;
   scrollbar-width: thin;
@@ -535,10 +535,30 @@
 .sidebar .list-item > span:not(.kbd) { white-space: normal; }
 .sidebar > .field { margin-bottom: var(--s-2); }
 
+/* The grip between the sidebar and the page: it draws the hairline that used to be
+   the sidebar's border (§7). The pointer drags it, ← / → step it, a double-click
+   puts it back at 200 (src/settings/main.ts). */
+.sidebar-grip {
+  flex: none;
+  width: 9px;
+  margin-inline-start: -4px;
+  background: linear-gradient(var(--hairline), var(--hairline)) center / 1px 100% no-repeat;
+  cursor: col-resize;
+  touch-action: none;
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+}
+.sidebar-grip:is(:hover, .dragging, :focus-visible) {
+  background-image: linear-gradient(var(--accent), var(--accent));
+  background-size: 2px 100%;
+}
+.sidebar-grip:focus-visible {
+  outline-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
 .page {
   flex: 1 1 auto;
   min-width: 0;
-  max-width: 560px;
   padding: var(--s-5);
   overflow-y: auto;
   color: var(--ink);

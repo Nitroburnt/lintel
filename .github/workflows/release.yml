@@ -101,6 +101,7 @@ jobs:
           fi
 
   winget:
+    if: github.repository == 'shakibbinkabir/lintel'
     name: Send the version to winget
     needs: release
     runs-on: windows-latest

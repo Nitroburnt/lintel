@@ -827,6 +827,541 @@
       "id": {
         "other": "{count} kali beralih"
       }
-    }
+    },
+    "Today": {
+      "en": "Today",
+      "zh-Hans": "今天",
+      "hi": "आज",
+      "es": "Hoy",
+      "ar": "اليوم",
+      "fr": "Aujourd’hui",
+      "bn": "আজ",
+      "pt-BR": "Hoje",
+      "ru": "Сегодня",
+      "id": "Hari ini"
+    },
+    "Yesterday": {
+      "en": "Yesterday",
+      "zh-Hans": "昨天",
+      "hi": "कल",
+      "es": "Ayer",
+      "ar": "أمس",
+      "fr": "Hier",
+      "bn": "গতকাল",
+      "pt-BR": "Ontem",
+      "ru": "Вчера",
+      "id": "Kemarin"
+    },
+    "Days": {
+      "en": "Days",
+      "zh-Hans": "天",
+      "hi": "दिन",
+      "es": "Días",
+      "ar": "أيام",
+      "fr": "Jours",
+      "bn": "দিন",
+      "pt-BR": "Dias",
+      "ru": "Дни",
+      "id": "Hari"
+    },
+    "Hours": {
+      "en": "Hours",
+      "zh-Hans": "小时",
+      "hi": "घंटे",
+      "es": "Horas",
+      "ar": "ساعات",
+      "fr": "Heures",
+      "bn": "ঘণ্টা",
+      "pt-BR": "Horas",
+      "ru": "Часы",
+      "id": "Jam"
+    },
+    "Last 14 days": {
+      "en": "Last 14 days",
+      "zh-Hans": "最近 14 天",
+      "hi": "पिछले 14 दिन",
+      "es": "Últimos 14 días",
+      "ar": "آخر 14 يومًا",
+      "fr": "14 derniers jours",
+      "bn": "গত ১৪ দিন",
+      "pt-BR": "Últimos 14 dias",
+      "ru": "Последние 14 дней",
+      "id": "14 hari terakhir"
+    },
+    "By hour": {
+      "en": "By hour",
+      "zh-Hans": "按小时",
+      "hi": "घंटे के अनुसार",
+      "es": "Por hora",
+      "ar": "حسب الساعة",
+      "fr": "Par heure",
+      "bn": "ঘণ্টা অনুযায়ী",
+      "pt-BR": "Por hora",
+      "ru": "По часам",
+      "id": "Per jam"
+    },
+    "Previous day": {
+      "en": "Previous day",
+      "zh-Hans": "前一天",
+      "hi": "पिछला दिन",
+      "es": "Día anterior",
+      "ar": "اليوم السابق",
+      "fr": "Jour précédent",
+      "bn": "আগের দিন",
+      "pt-BR": "Dia anterior",
+      "ru": "Предыдущий день",
+      "id": "Hari sebelumnya"
+    },
+    "Next day": {
+      "en": "Next day",
+      "zh-Hans": "后一天",
+      "hi": "अगला दिन",
+      "es": "Día siguiente",
+      "ar": "اليوم التالي",
+      "fr": "Jour suivant",
+      "bn": "পরের দিন",
+      "pt-BR": "Próximo dia",
+      "ru": "Следующий день",
+      "id": "Hari berikutnya"
+    },
+    "Filter by category": {
+      "en": "Filter by category",
+      "zh-Hans": "按类别筛选",
+      "hi": "श्रेणी से छाँटें",
+      "es": "Filtrar por categoría",
+      "ar": "تصفية حسب الفئة",
+      "fr": "Filtrer par catégorie",
+      "bn": "বিভাগ দিয়ে ছাঁটুন",
+      "pt-BR": "Filtrar por categoria",
+      "ru": "Фильтр по категории",
+      "id": "Saring menurut kategori"
+    },
+    "Nothing was recorded this day.": {
+      "en": "Nothing was recorded this day.",
+      "zh-Hans": "这天没有记录。",
+      "hi": "इस दिन कुछ दर्ज नहीं हुआ।",
+      "es": "No se registró nada este día.",
+      "ar": "لم يُسجَّل شيء في هذا اليوم.",
+      "fr": "Rien n’a été enregistré ce jour.",
+      "bn": "এই দিনে কিছু রেকর্ড হয়নি।",
+      "pt-BR": "Nada foi registrado neste dia.",
+      "ru": "В этот день ничего не записано.",
+      "id": "Tidak ada yang tercatat di hari ini."
+    },
+    "Back": {
+      "en": "Back",
+      "zh-Hans": "返回",
+      "hi": "वापस",
+      "es": "Atrás",
+      "ar": "رجوع",
+      "fr": "Retour",
+      "bn": "ফিরে যান",
+      "pt-BR": "Voltar",
+      "ru": "Назад",
+      "id": "Kembali"
+    },
+    "Open": {
+      "en": "Open",
+      "zh-Hans": "打开",
+      "hi": "खोलें",
+      "es": "Abrir",
+      "ar": "فتح",
+      "fr": "Ouvrir",
+      "bn": "খুলুন",
+      "pt-BR": "Abrir",
+      "ru": "Открыть",
+      "id": "Buka"
+    },
+    "Show in Explorer": {
+      "en": "Show in Explorer",
+      "zh-Hans": "在资源管理器中显示",
+      "hi": "फ़ाइल एक्सप्लोरर में दिखाएँ",
+      "es": "Mostrar en el Explorador",
+      "ar": "إظهار في المستكشف",
+      "fr": "Afficher dans l’Explorateur",
+      "bn": "ফাইল এক্সপ্লোরারে দেখান",
+      "pt-BR": "Mostrar no Explorador",
+      "ru": "Показать в Проводнике",
+      "id": "Tampilkan di Explorer"
+    },
+    "Hide this app": {
+      "en": "Hide this app",
+      "zh-Hans": "隐藏此应用",
+      "hi": "इस ऐप को छिपाएँ",
+      "es": "Ocultar esta app",
+      "ar": "إخفاء هذا التطبيق",
+      "fr": "Masquer cette application",
+      "bn": "এই অ্যাপ লুকান",
+      "pt-BR": "Ocultar este app",
+      "ru": "Скрыть это приложение",
+      "id": "Sembunyikan aplikasi ini"
+    },
+    "Hidden apps": {
+      "en": "Hidden apps",
+      "zh-Hans": "已隐藏的应用",
+      "hi": "छिपाए गए ऐप",
+      "es": "Apps ocultas",
+      "ar": "التطبيقات المخفية",
+      "fr": "Applications masquées",
+      "bn": "লুকানো অ্যাপ",
+      "pt-BR": "Apps ocultos",
+      "ru": "Скрытые приложения",
+      "id": "Aplikasi tersembunyi"
+    },
+    "Show again": {
+      "en": "Show again",
+      "zh-Hans": "重新显示",
+      "hi": "फिर दिखाएँ",
+      "es": "Mostrar de nuevo",
+      "ar": "إظهار مرة أخرى",
+      "fr": "Afficher de nouveau",
+      "bn": "আবার দেখান",
+      "pt-BR": "Mostrar novamente",
+      "ru": "Показать снова",
+      "id": "Tampilkan lagi"
+    },
+    "No app is hidden.": {
+      "en": "No app is hidden.",
+      "zh-Hans": "没有隐藏任何应用。",
+      "hi": "कोई ऐप छिपा नहीं है।",
+      "es": "No hay ninguna app oculta.",
+      "ar": "لا يوجد تطبيق مخفي.",
+      "fr": "Aucune application n’est masquée.",
+      "bn": "কোনো অ্যাপ লুকানো নেই।",
+      "pt-BR": "Nenhum app está oculto.",
+      "ru": "Ни одно приложение не скрыто.",
+      "id": "Tidak ada aplikasi yang disembunyikan."
+    },
+    "Show window titles": {
+      "en": "Show window titles",
+      "zh-Hans": "显示窗口标题",
+      "hi": "विंडो शीर्षक दिखाएँ",
+      "es": "Mostrar títulos de ventana",
+      "ar": "إظهار عناوين النوافذ",
+      "fr": "Afficher les titres de fenêtres",
+      "bn": "উইন্ডোর শিরোনাম দেখান",
+      "pt-BR": "Mostrar títulos de janelas",
+      "ru": "Показывать заголовки окон",
+      "id": "Tampilkan judul jendela"
+    },
+    "Keep the title of the window in front with its app in Screen time, such as the document or page it has open. Off by default: a title can name a document, a page or a message.": {
+      "en": "Keep the title of the window in front with its app in Screen time, such as the document or page it has open. Off by default: a title can name a document, a page or a message."
+    },
+    "It counts the time each app is in front: app names, durations and, if you turn them on, window titles. Kept on this PC.": {
+      "en": "It counts the time each app is in front: app names, durations and, if you turn them on, window titles. Kept on this PC.",
+      "zh-Hans": "统计每个应用位于前台的时间：应用名称、时长，以及你开启后的窗口标题。保存在此电脑上。",
+      "hi": "यह गिनता है कि हर ऐप कितनी देर सामने रहा: ऐप के नाम, अवधि और, यदि आप चालू करें, विंडो के शीर्षक। इसी पीसी पर रखे जाते हैं।",
+      "es": "Cuenta el tiempo que cada app está en primer plano: nombres, duraciones y, si los activas, títulos de ventana. Guardado en este PC.",
+      "ar": "يحسب الوقت الذي يكون فيه كل تطبيق في المقدمة: أسماء التطبيقات والمدد، وعناوين النوافذ إن فعّلتها. تُحفظ على هذا الكمبيوتر.",
+      "fr": "Il compte le temps pendant lequel chaque application est au premier plan : noms, durées et, si vous l’activez, titres de fenêtres. Conservé sur ce PC.",
+      "bn": "এটি প্রতিটি অ্যাপ কতক্ষণ সামনে ছিল তা গোনে: অ্যাপের নাম, সময়কাল এবং আপনি চালু করলে উইন্ডোর শিরোনাম। এই পিসিতেই থাকে।",
+      "pt-BR": "Conta o tempo em que cada app fica na frente: nomes, durações e, se você ativar, títulos de janelas. Guardado neste PC.",
+      "ru": "Считает, сколько времени каждое приложение находится на переднем плане: названия, длительность и, если включить, заголовки окон. Хранится на этом ПК.",
+      "id": "Menghitung berapa lama tiap aplikasi ada di depan: nama, durasi, dan, jika Anda aktifkan, judul jendela. Disimpan di PC ini."
+    },
+    "Counts the time each app is in front and shows it on the island, with each program's own file for its icon. Kept on this PC.": {
+      "en": "Counts the time each app is in front and shows it on the island, with each program's own file for its icon. Kept on this PC.",
+      "zh-Hans": "统计每个应用位于前台的时间并显示在灵动岛上，并用各程序自身的文件显示图标。保存在此电脑上。",
+      "hi": "हर ऐप कितनी देर सामने रहा यह गिनकर आइलैंड पर दिखाता है, और आइकन के लिए उस प्रोग्राम की अपनी फ़ाइल इस्तेमाल करता है। इसी पीसी पर रखा जाता है।",
+      "es": "Cuenta el tiempo que cada app está en primer plano y lo muestra en la isla, con el archivo propio de cada programa para su icono. Guardado en este PC.",
+      "ar": "يحسب الوقت الذي يكون فيه كل تطبيق في المقدمة ويعرضه في الجزيرة، ويستخدم ملف كل برنامج لأيقونته. يُحفظ على هذا الكمبيوتر.",
+      "fr": "Compte le temps pendant lequel chaque application est au premier plan et l’affiche sur l’îlot, avec le fichier propre à chaque programme pour son icône. Conservé sur ce PC.",
+      "bn": "প্রতিটি অ্যাপ কতক্ষণ সামনে ছিল তা গুনে আইল্যান্ডে দেখায়, এবং আইকনের জন্য প্রতিটি প্রোগ্রামের নিজস্ব ফাইল ব্যবহার করে। এই পিসিতেই থাকে।",
+      "pt-BR": "Conta o tempo em que cada app fica na frente e mostra na ilha, com o arquivo próprio de cada programa para o ícone. Guardado neste PC.",
+      "ru": "Считает, сколько времени каждое приложение находится на переднем плане, и показывает это на острове, используя собственный файл программы для значка. Хранится на этом ПК.",
+      "id": "Menghitung berapa lama tiap aplikasi ada di depan dan menampilkannya di island, dengan file tiap program untuk ikonnya. Disimpan di PC ini."
+    },
+    "App icons": {
+      "en": "App icons",
+      "zh-Hans": "应用图标",
+      "hi": "ऐप आइकन",
+      "es": "Iconos de las apps",
+      "ar": "أيقونات التطبيقات",
+      "fr": "Icônes des applications",
+      "bn": "অ্যাপ আইকন",
+      "pt-BR": "Ícones dos apps",
+      "ru": "Значки приложений",
+      "id": "Ikon aplikasi"
+    },
+    "Desktop": {
+      "en": "Desktop",
+      "zh-Hans": "桌面",
+      "hi": "डेस्कटॉप",
+      "es": "Escritorio",
+      "ar": "سطح المكتب",
+      "fr": "Bureau",
+      "bn": "ডেস্কটপ",
+      "pt-BR": "Área de trabalho",
+      "ru": "Рабочий стол",
+      "id": "Desktop"
+    },
+    "Category": {
+      "en": "Category",
+      "zh-Hans": "类别",
+      "hi": "श्रेणी",
+      "es": "Categoría",
+      "ar": "الفئة",
+      "fr": "Catégorie",
+      "bn": "বিভাগ",
+      "pt-BR": "Categoria",
+      "ru": "Категория",
+      "id": "Kategori"
+    },
+    "Use the default category": {
+      "en": "Use the default category",
+      "zh-Hans": "使用默认类别",
+      "hi": "डिफ़ॉल्ट श्रेणी रखें",
+      "es": "Usar la categoría predeterminada",
+      "ar": "استخدم الفئة الافتراضية",
+      "fr": "Utiliser la catégorie par défaut",
+      "bn": "ডিফল্ট বিভাগ ব্যবহার করুন",
+      "pt-BR": "Usar a categoria padrão",
+      "ru": "Использовать категорию по умолчанию",
+      "id": "Pakai kategori bawaan"
+    },
+    "No program file.": {
+      "en": "No program file.",
+      "zh-Hans": "没有程序文件。",
+      "hi": "कोई प्रोग्राम फ़ाइल नहीं।",
+      "es": "No hay archivo del programa.",
+      "ar": "لا يوجد ملف برنامج.",
+      "fr": "Aucun fichier de programme.",
+      "bn": "কোনো প্রোগ্রাম ফাইল নেই।",
+      "pt-BR": "Não há arquivo do programa.",
+      "ru": "Нет файла программы.",
+      "id": "Tidak ada file program."
+    },
+    "{count}% of the day": {
+      "en": "{count}% of the day",
+      "zh-Hans": "占全天的 {count}%",
+      "hi": "दिन का {count}%",
+      "es": "{count} % del día",
+      "ar": "{count}% من اليوم",
+      "fr": "{count} % de la journée",
+      "bn": "দিনের {count}%",
+      "pt-BR": "{count}% do dia",
+      "ru": "{count} % дня",
+      "id": "{count}% hari ini"
+    },
+    "Keep history for": {
+      "en": "Keep history for",
+      "zh-Hans": "历史保留时长",
+      "hi": "इतिहास कितने समय तक रखें",
+      "es": "Conservar el historial durante",
+      "ar": "مدة الاحتفاظ بالسجل",
+      "fr": "Conserver l’historique pendant",
+      "bn": "ইতিহাস কতদিন রাখবেন",
+      "pt-BR": "Manter o histórico por",
+      "ru": "Хранить историю",
+      "id": "Simpan riwayat selama"
+    },
+    "Keep {count} days": {
+      "en": "Keep {count} days",
+      "zh-Hans": "保留 {count} 天",
+      "hi": "{count} दिन रखें",
+      "es": "Conservar {count} días",
+      "ar": "الاحتفاظ لمدة {count} يومًا",
+      "fr": "Conserver {count} jours",
+      "bn": "{count} দিন রাখুন",
+      "pt-BR": "Manter {count} dias",
+      "ru": "Хранить {count} дн.",
+      "id": "Simpan {count} hari"
+    },
+    "Unlimited": {
+      "en": "Unlimited",
+      "zh-Hans": "无限",
+      "hi": "असीमित",
+      "es": "Sin límite",
+      "ar": "بلا حدود",
+      "fr": "Sans limite",
+      "bn": "সীমাহীন",
+      "pt-BR": "Sem limite",
+      "ru": "Без ограничений",
+      "id": "Tanpa batas"
+    },
+    "Days of screen time and break counts kept on this PC: 30 unless you change it. Unlimited keeps every day until you delete it.": {
+      "en": "Days of screen time and break counts kept on this PC: 30 unless you change it. Unlimited keeps every day until you delete it.",
+      "zh-Hans": "屏幕使用时间和休息次数在这台电脑上保留的天数：默认 30 天。选择“无限”会保留每一天，直到你删除。",
+      "hi": "इस PC पर स्क्रीन टाइम और ब्रेक की गिनती कितने दिन रखी जाए: बदलने तक 30 दिन। “असीमित” हर दिन रखता है, जब तक आप उसे न हटाएँ।",
+      "es": "Días de tiempo de pantalla y recuentos de descansos que se guardan en este PC: 30 salvo que lo cambies. Sin límite guarda todos los días hasta que los borres.",
+      "ar": "عدد أيام وقت الشاشة وعدّ الاستراحات المحفوظة على هذا الكمبيوتر: 30 ما لم تغيّره. «بلا حدود» يحفظ كل يوم حتى تحذفه.",
+      "fr": "Jours de temps d’écran et de décompte des pauses conservés sur ce PC : 30 sauf si vous changez. « Sans limite » conserve chaque jour jusqu’à ce que vous le supprimiez.",
+      "bn": "এই পিসিতে স্ক্রিন টাইম ও বিরতির হিসাব কতদিন রাখা হবে: না বদলালে ৩০ দিন। “সীমাহীন” প্রতিটি দিন রাখে, যতক্ষণ আপনি না মুছবেন।",
+      "pt-BR": "Dias de tempo de tela e contagem de pausas guardados neste PC: 30, a menos que você mude. Sem limite guarda todos os dias até você apagá-los.",
+      "ru": "Сколько дней экранного времени и подсчёта перерывов хранится на этом ПК: 30, если не изменить. «Без ограничений» хранит каждый день, пока вы его не удалите.",
+      "id": "Berapa hari waktu layar dan hitungan istirahat disimpan di PC ini: 30 kecuali Anda mengubahnya. Tanpa batas menyimpan setiap hari sampai Anda menghapusnya."
+    },
+    "A CSV and a JSON of every day kept, written to the feature's own folder.": {
+      "en": "A CSV and a JSON of every day kept, written to the feature's own folder.",
+      "zh-Hans": "已保留每一天的 CSV 和 JSON，写入该功能自己的文件夹。",
+      "hi": "रखे गए हर दिन का CSV और JSON, इस सुविधा के अपने फ़ोल्डर में लिखा जाता है।",
+      "es": "Un CSV y un JSON de cada día guardado, escritos en la carpeta propia de la función.",
+      "ar": "ملف CSV وJSON لكل يوم محفوظ، يُكتبان في مجلد الميزة نفسه.",
+      "fr": "Un CSV et un JSON de chaque jour conservé, écrits dans le dossier propre à la fonction.",
+      "bn": "রাখা প্রতিটি দিনের CSV ও JSON, ফিচারের নিজের ফোল্ডারে লেখা হয়।",
+      "pt-BR": "Um CSV e um JSON de cada dia guardado, gravados na pasta da própria função.",
+      "ru": "CSV и JSON каждого сохранённого дня, записанные в папку самой функции.",
+      "id": "CSV dan JSON setiap hari yang disimpan, ditulis ke folder fitur itu sendiri."
+    },
+    "The screen-time history kept on this PC.": {
+      "en": "The screen-time history kept on this PC.",
+      "zh-Hans": "这台电脑上保留的屏幕使用时间历史。",
+      "hi": "इस PC पर रखा गया स्क्रीन टाइम इतिहास।",
+      "es": "El historial de tiempo de pantalla guardado en este PC.",
+      "ar": "سجل وقت الشاشة المحفوظ على هذا الكمبيوتر.",
+      "fr": "L’historique du temps d’écran conservé sur ce PC.",
+      "bn": "এই পিসিতে রাখা স্ক্রিন টাইম ইতিহাস।",
+      "pt-BR": "O histórico de tempo de tela guardado neste PC.",
+      "ru": "История экранного времени, хранящаяся на этом ПК.",
+      "id": "Riwayat waktu layar yang disimpan di PC ini."
+    },
+    "An app left out of the list; its time still counts in the day's total.": {
+      "en": "An app left out of the list; its time still counts in the day's total."
+    },
+    "Read each program's own icon for the list. Its file is kept on this PC with the app's name and time.": {
+      "en": "Read each program's own icon for the list. Its file is kept on this PC with the app's name and time."
+    },
+    "It counts the time each app is in front, with the program's own file for its icon. Kept on this PC, never window titles.": {
+      "en": "It counts the time each app is in front, with the program's own file for its icon. Kept on this PC, never window titles."
+    },
+    "Counts the time each app is in front and shows it on the island, with each program's own file for its icon. Kept on this PC, never window titles.": {
+      "en": "Counts the time each app is in front and shows it on the island, with each program's own file for its icon. Kept on this PC, never window titles."
+    },
+    "{count} app": {
+      "en": {
+        "one": "{count} app",
+        "other": "{count} apps"
+      },
+      "zh-Hans": {
+        "other": "{count} 个应用"
+      },
+      "hi": {
+        "one": "{count} ऐप",
+        "other": "{count} ऐप"
+      },
+      "es": {
+        "one": "{count} app",
+        "many": "{count} apps",
+        "other": "{count} apps"
+      },
+      "ar": {
+        "zero": "{count} تطبيق",
+        "one": "{count} تطبيق",
+        "two": "{count} تطبيقان",
+        "few": "{count} تطبيقات",
+        "many": "{count} تطبيقًا",
+        "other": "{count} تطبيق"
+      },
+      "fr": {
+        "one": "{count} application",
+        "many": "{count} applications",
+        "other": "{count} applications"
+      },
+      "bn": {
+        "one": "{count}টি অ্যাপ",
+        "other": "{count}টি অ্যাপ"
+      },
+      "pt-BR": {
+        "one": "{count} app",
+        "many": "{count} apps",
+        "other": "{count} apps"
+      },
+      "ru": {
+        "one": "{count} приложение",
+        "few": "{count} приложения",
+        "many": "{count} приложений",
+        "other": "{count} приложения"
+      },
+      "id": {
+        "other": "{count} aplikasi"
+      }
+    },
+    "Close": {
+      "en": "Close",
+      "zh-Hans": "关闭",
+      "hi": "बंद करें",
+      "es": "Cerrar",
+      "ar": "إغلاق",
+      "fr": "Fermer",
+      "bn": "বন্ধ করুন",
+      "pt-BR": "Fechar",
+      "ru": "Закрыть",
+      "id": "Tutup"
+    },
+    "All apps": {
+      "en": "All apps",
+      "zh-Hans": "全部应用",
+      "hi": "सभी ऐप",
+      "es": "Todas las apps",
+      "ar": "كل التطبيقات",
+      "fr": "Toutes les applications",
+      "bn": "সব অ্যাপ",
+      "pt-BR": "Todos os apps",
+      "ru": "Все приложения",
+      "id": "Semua aplikasi"
+    },
+    "Open the full report": {
+      "en": "Open the full report",
+      "zh-Hans": "打开完整报告",
+      "hi": "पूरी रिपोर्ट खोलें",
+      "es": "Abrir el informe completo",
+      "ar": "فتح التقرير الكامل",
+      "fr": "Ouvrir le rapport complet",
+      "bn": "সম্পূর্ণ রিপোর্ট খুলুন",
+      "pt-BR": "Abrir o relatório completo",
+      "ru": "Открыть полный отчёт",
+      "id": "Buka laporan lengkap"
+    },
+    "Drag a corner to resize": {
+      "en": "Drag a corner to resize",
+      "zh-Hans": "拖动边角调整大小",
+      "hi": "आकार बदलने के लिए कोना खींचें",
+      "es": "Arrastra una esquina para cambiar el tamaño",
+      "ar": "اسحب زاوية لتغيير الحجم",
+      "fr": "Faites glisser un coin pour redimensionner",
+      "bn": "আকার বদলাতে কোণা টানুন",
+      "pt-BR": "Arraste um canto para redimensionar",
+      "ru": "Потяните за угол, чтобы изменить размер",
+      "id": "Tarik sudut untuk mengubah ukuran"
+    },
+    "Pick a day": {
+      "en": "Pick a day"
+    },
+    "Show all apps": {
+      "en": "Show all apps"
+    },
+    "Find an app": { "en": "Find an app" },
+    "No app matches.": { "en": "No app matches." },
+    "Delete day": { "en": "Delete day" },
+    "Delete this day?": { "en": "Delete this day?" },
+    "Delete this day from the history": { "en": "Delete this day from the history" },
+    "Remove from history": { "en": "Remove from history" },
+    "Remove from the whole history?": { "en": "Remove from the whole history?" },
+    "Delete every second of this app, on every day": { "en": "Delete every second of this app, on every day" },
+    "Goal: {count}": { "en": "Goal: {count}" },
+    "Are you sure you want to perform this action?": { "en": "Are you sure you want to perform this action?" },
+    "Yes": { "en": "Yes" },
+    "No": { "en": "No" },
+    "Daily budget": { "en": "Daily budget" },
+    "Budget applies to": { "en": "Budget applies to" },
+    "Away after": { "en": "Away after" },
+    "Export a copy": { "en": "Export a copy" },
+    "Saved to {folder}": { "en": "Saved to {folder}" },
+    "Quiet hours": { "en": "Quiet hours" },
+    "From – to": { "en": "From – to" },
+    "Quiet hours start": { "en": "Quiet hours start" },
+    "Quiet hours end": { "en": "Quiet hours end" },
+    "Wait during Windows quiet hours": { "en": "Wait during Windows quiet hours" },
+    "Screen time target reached": { "en": "Screen time target reached" },
+    "The budget for {category} is used up.": { "en": "The budget for {category} is used up." },
+    "The screen-time budget for today is used up.": { "en": "The screen-time budget for today is used up." },
+    "Open report": { "en": "Open report" },
+    "Today: {taken} taken · {skipped} skipped": { "en": "Today: {taken} taken · {skipped} skipped" },
+    "No breaks taken yet today.": { "en": "No breaks taken yet today." },
+    "Pause for 30 min": { "en": "Pause for 30 min" },
+    "Resume": { "en": "Resume" },
+    "View Details": { "en": "View Details" },
+    "Previous month": { "en": "Previous month" },
+    "Next month": { "en": "Next month" }
   }
 }

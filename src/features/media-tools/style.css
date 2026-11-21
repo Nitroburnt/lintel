@@ -33,7 +33,7 @@
 
 /* A few options in a row, each with its small label above. */
 .f-media-tools-opts { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-3); align-items: flex-end; min-height: 0; }
-.f-media-tools-opt { display: flex; flex-direction: column; gap: var(--s-1); font: 400 var(--t-sm) var(--font); color: var(--ink-3); }
+.f-media-tools-opt { display: flex; flex-direction: column; gap: var(--s-1); font: 400 var(--t-sm) var(--font); color: var(--dim); }
 .f-media-tools-select select { min-width: 72px; }
 .f-media-tools-num { width: 64px; }
 .f-media-tools-num input { width: 100%; }
@@ -56,4 +56,4 @@
 
 .f-media-tools-settings { display: flex; flex-direction: column; gap: var(--s-3); }
 .f-media-tools-hint { color: var(--ink-2); font: 400 var(--t-sm) var(--font); }
-.f-media-tools-note { margin: 0; color: var(--ink-3); font: 400 var(--t-sm) var(--font); }
+.f-media-tools-note { margin: 0; color: var(--dim); font: 400 var(--t-sm) var(--font); }

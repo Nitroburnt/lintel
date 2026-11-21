@@ -29,14 +29,15 @@ import { featureOn } from "../core/registry";
 import { buildRecap } from "./recap";
 import { N_, language, t, tl, type Msg } from "../i18n/i18n";
 import type { ViewCommand } from "../island/shortcuts";
-import { buildGallery, sections } from "../island/sections";
+import { MAX_TABS, buildGallery, headerKeys, sections } from "../island/sections";
 
 // The session list, the chips and the answer preview (core-3) have their own
 // sheet, loaded with the views rather than at import (tests have no bundler).
 if (typeof document !== "undefined" && document.head) void import("./agents.css");
 
 export interface ViewActions {
-  setView(v: IslandViewName): void;
+  /** `byHover`: reached by the pointer resting on a tab, so it never takes the keyboard (§4.1). */
+  setView(v: IslandViewName, byHover?: boolean): void;
   /** "Cancel" on a dropped file: forgets it and goes back home. */
   cancelDrop(): void;
   collapse(): void;
@@ -76,7 +77,9 @@ export interface ViewActions {
   openSettingsWindow(): void;
   blip(): void;
   /** A feature's section, by its key (`<feature>.<id>`). */
-  openSection(key: string): void;
+  openSection(key: string, byHover?: boolean): void;
+  /** A header tab was dragged onto another: it takes that place, saved to Settings › Island. */
+  moveTab(from: string, to: string): void;
   /** The section the island is on, or null. */
   activeSection(): string | null;
   /** The level to show in the header (a volume or brightness notice while the island is open). */
@@ -273,8 +276,8 @@ const pillLabel = (task: AgentTask) => (task.id === "integration_claude" ? "VS C
 const SOUNDS_ON = N_("{name} sounds on");
 const SOUNDS_OFF = N_("{name} sounds off");
 
-/** How many section tabs the header holds before the gallery is the way to the rest. */
-const HEADER_SECTIONS = 7; // ponytail: a fixed count; measure the row if titles get long
+/** How long the pointer rests on a section tab before that section opens (a sweep opens nothing). */
+const TAB_HOVER_MS = 180;
 
 export function buildHeader(actions: ViewActions): ViewHost {
   const go = (v: IslandViewName) => {
@@ -290,9 +293,14 @@ export function buildHeader(actions: ViewActions): ViewHost {
   const tabHome = tab("home", tl("Home"), () => go(State.tasks.length === 0 ? "empty" : "overview"));
   const tabChat = tab("chat", tl("Chat"), () => go("prompt"));
   const tabDrop = tab("plus", tl("Drop"), () => go("upload"));
+  // What resting on a tab opens (the hover block below); Home's changes with the sessions.
+  tabChat.dataset.hover = "prompt";
+  tabDrop.dataset.hover = "upload";
   const sectionTabs = h("span", { class: "isl-tabs" });
   const galleryBtn = iconTab("grid", tl("All sections (Ctrl+K)"), () => go("gallery"));
+  galleryBtn.dataset.hover = "gallery";
   const gearBtn = iconTab("gear", tl("Settings"), () => go("settings"));
+  gearBtn.dataset.hover = "settings";
   // The switch for the app's own sounds (not the system volume): its icon, its
   // colour and its tooltip say which way it is.
   const soundBtn = iconTab("volume", "", () => actions.toggleSound());
@@ -314,8 +322,15 @@ export function buildHeader(actions: ViewActions): ViewHost {
   function syncSectionTabs() {
     const all = sections();
     const active = actions.activeSection();
-    // The first few, and the one that is open if it is further down the list.
-    const shown = all.filter((s, i) => i < HEADER_SECTIONS || s.key === active);
+    // The user's tabs (Settings › Island), and the one that is open if it is not
+    // among them. A full row holds the open section in its last place rather than
+    // growing to eleven: the header never overflows.
+    const keys = headerKeys();
+    if (active && !keys.includes(active)) {
+      if (keys.length >= MAX_TABS) keys.pop();
+      keys.push(active);
+    }
+    const shown = keys.flatMap((key) => all.filter((s) => s.key === key));
     const key = `${language()}~${shown.map((s) => s.key).join("|")}`;
     if (key !== tabsKey) {
       tabsKey = key;
@@ -333,6 +348,96 @@ export function buildHeader(actions: ViewActions): ViewHost {
     for (const el of sectionTabs.children) el.classList.toggle("on", (el as HTMLElement).dataset.key === on);
     galleryBtn.style.display = all.length > 0 ? "" : "none";
   }
+
+  // Hover intent on the header's tabs: the tab the pointer rests on for 180 ms
+  // opens what a click on it opens, without the sound and without taking the
+  // keyboard (§4.1: a view reached by a hover never takes it). Delegated, so a
+  // rebuilt row (language, features) keeps it. A card that waits, a file being
+  // dropped and a mail being written keep the page they own.
+  let hoverTimer = 0;
+  let hoverEl: HTMLElement | null = null;
+  const HOVER_TAB = ".tab[data-hover], .tab[data-key]";
+  const hoverable = () =>
+    State.mode === "expanded" && !State.pendingApproval &&
+    State.view !== "uploading" && State.view !== "choose" && State.view !== "mail";
+  const cancelHover = () => {
+    window.clearTimeout(hoverTimer);
+    hoverTimer = 0;
+    hoverEl = null;
+  };
+  const already = (el: HTMLElement) =>
+    el.dataset.hover ? State.view === el.dataset.hover : State.view === "section" && el.dataset.key === actions.activeSection();
+  el.addEventListener("pointerover", (e) => {
+    const ev = e as PointerEvent;
+    // A held button is a drag or a click, never a hover: the tab under it must not change.
+    if (ev.buttons !== 0) {
+      cancelHover();
+      return;
+    }
+    const tabEl = (ev.target as Element).closest<HTMLElement>(HOVER_TAB);
+    if (!tabEl || tabEl === hoverEl) return;
+    cancelHover();
+    if (!hoverable() || already(tabEl)) return;
+    hoverEl = tabEl;
+    hoverTimer = window.setTimeout(() => {
+      hoverTimer = 0;
+      if (!hoverable() || !tabEl.matches(":hover")) return;
+      const view = tabEl.dataset.hover as IslandViewName | undefined;
+      if (view) actions.setView(view, true);
+      else if (tabEl.dataset.key) actions.openSection(tabEl.dataset.key, true);
+    }, TAB_HOVER_MS);
+  });
+  // Off the row, or onto another tab: the one it left does not open.
+  el.addEventListener("pointerout", (e) => {
+    const to = (e as PointerEvent).relatedTarget as Element | null;
+    if (!to?.closest?.(HOVER_TAB)) cancelHover();
+  });
+  el.addEventListener("pointerdown", cancelHover);
+
+  // Dragging a section tab onto another: it takes that tab's place, and that
+  // order is the one Settings › Island shows (`islandTabs`). A press that does
+  // not travel is the click that opens the section.
+  let drag: { key: string; x: number; on: HTMLElement | null; open: boolean } | null = null;
+  sectionTabs.addEventListener("pointerdown", (e) => {
+    const el = (e.target as Element).closest<HTMLElement>(".tab[data-key]");
+    if (e.button !== 0 || !el?.dataset.key) return;
+    drag = { key: el.dataset.key, x: e.clientX, on: null, open: false };
+    el.setPointerCapture(e.pointerId);
+  });
+  sectionTabs.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    if (!drag.open) {
+      if (Math.abs(e.clientX - drag.x) < 4) return;
+      drag.open = true;
+      sectionTabs.querySelector<HTMLElement>(`.tab[data-key="${drag.key}"]`)?.classList.add("dragging");
+    }
+    const over = (document.elementFromPoint(e.clientX, e.clientY) as Element | null)
+      ?.closest<HTMLElement>(".isl-tabs .tab[data-key]") ?? null;
+    const to = over && over.dataset.key !== drag.key ? over : null;
+    if (to !== drag.on) {
+      drag.on?.classList.remove("drop");
+      to?.classList.add("drop");
+      drag.on = to;
+    }
+  });
+  const endDrag = () => {
+    if (!drag) return;
+    const { key, on, open } = drag;
+    drag = null;
+    sectionTabs.querySelector(".dragging")?.classList.remove("dragging");
+    on?.classList.remove("drop");
+    if (!open) return;
+    // A tab was dragged: the release is not the click that opens one.
+    const eat = (ev: Event) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+    };
+    window.addEventListener("click", eat, true);
+    window.setTimeout(() => window.removeEventListener("click", eat, true));
+    if (on?.dataset.key && on.dataset.key !== key) actions.moveTab(key, on.dataset.key);
+  };
+  window.addEventListener("pointerup", endDrag);
+  window.addEventListener("pointercancel", endDrag);
 
   function syncPlanPills() {
     const agents = actions.featureOn("agents");
@@ -366,6 +471,8 @@ export function buildHeader(actions: ViewActions): ViewHost {
     el,
     sync() {
       const v = State.view;
+      // Home opens on the dashboard while there are no sessions, as its click does.
+      tabHome.dataset.hover = State.tasks.length === 0 ? "empty" : "overview";
       tabHome.classList.toggle("on", v === "overview" || v === "empty");
       tabChat.classList.toggle("on", v === "prompt");
       tabDrop.classList.toggle("on", v === "upload");

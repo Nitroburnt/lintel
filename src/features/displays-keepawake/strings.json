@@ -701,6 +701,14 @@
       "pt-BR": "Brilho",
       "ru": "Яркость",
       "id": "Kecerahan"
-    }
+    },
+    "Brightness and contrast": { "en": "Brightness and contrast" },
+    "Contrast": { "en": "Contrast" },
+    "Built-in display": { "en": "Built-in display" },
+    "No display found.": { "en": "No display found." },
+    "Close": { "en": "Close" },
+    "Refresh": { "en": "Refresh" },
+    "Updated": { "en": "Updated" },
+    "No change": { "en": "No change" }
   }
 }

@@ -71,4 +71,4 @@
 
 /* The bar beside selected text: a row of icon buttons that never takes focus. */
 .f-command-bar-sel { flex-direction: row; align-items: center; gap: 2px; box-sizing: border-box; height: 100%; padding: var(--s-1) var(--s-2); }
-.f-command-bar-sel-note { padding: 0 var(--s-2); color: var(--text-2, inherit); white-space: nowrap; }
+.f-command-bar-sel-note { padding: 0 var(--s-2); color: var(--dim); white-space: nowrap; }

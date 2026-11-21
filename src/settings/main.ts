@@ -24,10 +24,10 @@ import { h, clear } from "../views/dom";
 import { card, row, field, iconBtn, list, toggle, type ListItem } from "../ui/components";
 import { icon } from "../ui/icons";
 import { installTooltip } from "../ui/tooltip";
-import { featureById, featureCtx, featureInfos, loadAllStrings, loadFeatures, onFeaturesChanged } from "../core/registry";
+import { featureById, featureCtx, featureInfos, loadAllStrings, loadFeatures, onFeaturesChanged, quietCtx } from "../core/registry";
 import { showOnboarding } from "../features/misc-late/onboarding";
 import { privacySection } from "../features/misc-late/privacy";
-import { sections } from "../island/sections";
+import { MAX_TABS, headerKeys, sections } from "../island/sections";
 import { agentsSection } from "./agents";
 import { sshSection, wslSection } from "./remote";
 import { colorDot } from "./colors";
@@ -436,12 +436,12 @@ function apiSection(hasKey: boolean): HTMLElement {
 // ── Gateway and agenda (chat feature's own settings) ──────────────────────────
 
 /** Claude through an Anthropic-compatible gateway, and the opt-in calendar agenda for the chat. */
-async function chatExtrasSection(prefs: ChatPrefs): Promise<HTMLElement> {
+async function chatExtrasSection(prefs: ChatPrefs, quiet = false): Promise<HTMLElement> {
   const url = h("input", {
     type: "text", placeholder: "https://gateway.example.com", value: prefs.gatewayUrl,
     style: "flex:1 1 auto;min-width:0", spellcheck: "false", autocomplete: "off",
   }) as HTMLInputElement;
-  const hasToken = (await Bridge.secretPresent("anthropic-gateway-token")) ?? false;
+  const hasToken = quiet ? false : (await Bridge.secretPresent("anthropic-gateway-token")) ?? false;
   const token = h("input", {
     type: "password", placeholder: hasToken ? `••••••••••••  ${t("(stored)")}` : t("Bearer token (optional)"),
     style: "flex:1 1 auto;min-width:0", autocomplete: "off", spellcheck: "false",
@@ -491,8 +491,8 @@ async function chatExtrasSection(prefs: ChatPrefs): Promise<HTMLElement> {
 }
 
 /** MCP servers other apps set up: which the Claude chat may use. Each tool call still asks. */
-async function mcpSection(prefs: ChatPrefs): Promise<HTMLElement> {
-  const found = await mcpServers();
+async function mcpSection(prefs: ChatPrefs, quiet = false): Promise<HTMLElement> {
+  const found = quiet ? [] : await mcpServers();
   const rows = found.map((s) =>
     h("div", { class: "line" },
       h("label", { text: `${s.id} · ${s.source}`, title: s.command }),
@@ -753,7 +753,7 @@ function exposureNotice(url: string, withKey: boolean): HTMLElement | null {
   }
 }
 
-function localSection(customKey: boolean): HTMLElement {
+function localSection(customKey: boolean, quiet = false): HTMLElement {
   const body = h("div", { style: "display:flex;flex-direction:column;gap:14px" });
   // The servers already running on this computer, to connect with one click
   // and no key. Looked for when this page opens and on "Scan again".
@@ -927,7 +927,7 @@ function localSection(customKey: boolean): HTMLElement {
 
   redraw();
   localRedraw = redraw;
-  void scan();
+  if (!quiet) void scan();
   return section;
 }
 
@@ -1061,7 +1061,7 @@ function n8nUrlNotice(input: HTMLInputElement): HTMLElement {
  * card opens and never stored (src-tauri/src/github.rs). Turning it on asks
  * once, to say whose login it is, or why there is none.
  */
-function ghLoginRow(): HTMLElement {
+function ghLoginRow(quiet = false): HTMLElement {
   const state = h("div", { class: "hint" });
   const check = async (on: boolean) => {
     state.textContent = "";
@@ -1076,7 +1076,7 @@ function ghLoginRow(): HTMLElement {
     }
   };
   const sw = toggle(false, (on) => void setGhLogin(on).then(() => check(on)));
-  void ghLoginOn().then((on) => sw.setAttribute("aria-checked", String(on)));
+  if (!quiet) void ghLoginOn().then((on) => sw.setAttribute("aria-checked", String(on)));
   return h("div", { style: "display:flex;flex-direction:column;gap:6px;padding-top:4px" },
     h("div", { class: "line", style: "flex-wrap:nowrap" },
       sw,
@@ -1096,7 +1096,7 @@ function ghLoginRow(): HTMLElement {
  */
 const WATCH_MAX = 20;
 
-function devAlertsBlock(): HTMLElement {
+function devAlertsBlock(quiet = false): HTMLElement {
   const patch = (value: object) => void Bridge.featurePatchSettings("integrations", value);
   const names = (raw: string) =>
     [...new Set(raw.split(/[\s,;]+/).filter(Boolean))].slice(0, WATCH_MAX);
@@ -1110,7 +1110,7 @@ function devAlertsBlock(): HTMLElement {
       patch({ [key]: list });
     };
     input.addEventListener("change", save);
-    void Bridge.featureSettings("integrations").then((stored) => {
+    if (!quiet) void Bridge.featureSettings("integrations").then((stored) => {
       const list = stored?.[key];
       if (Array.isArray(list)) input.value = list.filter((x) => typeof x === "string").join(", ");
     });
@@ -1120,7 +1120,7 @@ function devAlertsBlock(): HTMLElement {
     );
   };
   const vercel = toggle(false, (on) => patch({ vercelAlerts: on }));
-  void Bridge.featureSettings("integrations").then((stored) =>
+  if (!quiet) void Bridge.featureSettings("integrations").then((stored) =>
     vercel.setAttribute("aria-checked", String(stored?.vercelAlerts === true)));
   return h("div", { style: "display:flex;flex-direction:column;gap:12px;margin-top:18px" },
     h("h3", { class: "section-title", text: t("Developer alerts") }),
@@ -1134,7 +1134,7 @@ function devAlertsBlock(): HTMLElement {
   );
 }
 
-function integrationsSection(present: Record<string, boolean>): HTMLElement {
+function integrationsSection(present: Record<string, boolean>, quiet = false): HTMLElement {
   const note = h("div", { class: "hint" });
   const list = h("div", { style: "display:flex;flex-direction:column;gap:14px" });
 
@@ -1193,7 +1193,7 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
     }
 
     if (def.hint) rows.append(h("div", { class: "hint", text: t(def.hint) }));
-    if (def.id === "integration_github") rows.append(ghLoginRow());
+    if (def.id === "integration_github") rows.append(ghLoginRow(quiet));
 
     list.append(
       h("div", { style: "display:flex;gap:12px;align-items:flex-start" },
@@ -1208,7 +1208,7 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
   }
 
   updateNote();
-  return h("section", {}, h("h2", { class: "section-title" }, h("span", { text: t("Integrations") })), note, list, devAlertsBlock());
+  return h("section", {}, h("h2", { class: "section-title" }, h("span", { text: t("Integrations") })), note, list, devAlertsBlock(quiet));
 }
 
 // ── General, Island, Mascot, Sounds ───────────────────────────────────────────
@@ -1235,7 +1235,7 @@ function generalPage(): HTMLElement[] {
   ];
 }
 
-function islandPage(): HTMLElement[] {
+function islandPage(quiet = false): HTMLElement[] {
   const autoClose = field({ type: "number", value: String(Math.round(settings.autoCloseInterval)) });
   Object.assign(autoClose.input, { min: "5", max: "120", step: "1" });
   autoClose.style.width = "88px";
@@ -1251,7 +1251,8 @@ function islandPage(): HTMLElement[] {
     h("option", { value: "cursor", text: t("Display under the cursor") }),
   );
   screen.value = settings.screen;
-  void Bridge.listMonitors().then((list) => {
+  // The search's label index builds this page without asking which displays are here.
+  if (!quiet) void Bridge.listMonitors().then((list) => {
     for (const m of list ?? []) screen.append(h("option", { value: m.key, text: m.label }));
     // Set again now the option exists. A display saved under an older key (moved,
     // resized, or saved before names were kept) is shown by its place or its
@@ -1309,7 +1310,58 @@ function islandPage(): HTMLElement[] {
     void save();
   });
 
+  // The tabs of the open island's header: every section, in the user's order.
+  // No list is the seven the app ships with, so the first change makes one.
+  const tabRows = h("div", { style: "display:flex;flex-direction:column;gap:2px" });
+  const tabCount = h("div", { class: "hint" });
+  let tabKeys = settings.islandTabs ?? headerKeys(null);
+  const setTabs = (next: string[]) => {
+    tabKeys = next;
+    settings.islandTabs = next;
+    void save();
+    drawTabs();
+  };
+  // Two tabs trade places in the list the user owns; a section whose feature is
+  // off is not on screen but keeps its key, so it comes back where it was.
+  const swapTabs = (a: string, b: string) => {
+    const ia = tabKeys.indexOf(a);
+    const ib = tabKeys.indexOf(b);
+    if (ia < 0 || ib < 0) return;
+    const next = [...tabKeys];
+    [next[ia], next[ib]] = [next[ib], next[ia]];
+    setTabs(next);
+  };
+  function drawTabs() {
+    const all = sections();
+    const chosen = tabKeys.filter((key) => all.some((s) => s.key === key));
+    tabCount.textContent = t("{used}/{max} tabs in the island.", { used: chosen.length, max: MAX_TABS });
+    clear(tabRows);
+    const ordered = [...chosen.map((key) => all.find((s) => s.key === key)!), ...all.filter((s) => !chosen.includes(s.key))];
+    for (const s of ordered) {
+      const at = chosen.indexOf(s.key);
+      const full = at < 0 && chosen.length >= MAX_TABS;
+      const line = h("div", { class: full ? "pill-row full" : "pill-row" },
+        icon(s.def.icon, 14),
+        h("span", { class: "name", text: t(s.def.title) }),
+        h("span", { class: "state", text: at >= 0 ? String(at + 1) : "" }),
+      );
+      if (at > 0) line.append(iconBtn("chevu", t("Move up"), () => swapTabs(s.key, chosen[at - 1])));
+      if (at >= 0 && at < chosen.length - 1) line.append(iconBtn("chevd", t("Move down"), () => swapTabs(s.key, chosen[at + 1])));
+      const sw = toggle(at >= 0, (on) => setTabs(on ? [...tabKeys, s.key] : tabKeys.filter((key) => key !== s.key)));
+      sw.disabled = full;
+      line.append(sw);
+      tabRows.append(line);
+    }
+  }
+  drawTabs();
+
   return [
+    h("div", { class: "section-title", text: t("Island tabs") }),
+    card([
+      h("div", { class: "hint", text: t("The tabs the open island shows, in your order. The sections you leave out stay in the gallery (Ctrl+K).") }),
+      tabCount,
+      tabRows,
+    ]),
     h("div", { class: "section-title", text: t("Behavior") }),
     card([
       row(t("Open on"), selectField(openOn), t("The tab the island opens on when the strip shows nothing of its own.")),
@@ -1410,7 +1462,7 @@ function mascotPage(): HTMLElement[] {
   ];
 }
 
-function soundsPage(): HTMLElement[] {
+function soundsPage(quiet = false): HTMLElement[] {
   const volume = h("input", {
     type: "range", min: "0", max: "0.5", step: "0.01",
     value: String(settings.soundVolume),
@@ -1427,7 +1479,7 @@ function soundsPage(): HTMLElement[] {
       const n = own?.length ?? 0;
       customCount.textContent = n > 0 ? t("{0} custom", { 0: n }) : "";
     });
-  countCustom();
+  if (!quiet) countCustom();
   const soundsFolder = h("button", { class: "btn secondary", text: t("Open sounds folder"), onclick: () => void Bridge.revealSoundsFolder() });
   const reloadSounds = h("button", {
     class: "btn secondary",
@@ -1665,7 +1717,7 @@ function shortcutsSection(initial: ShortcutsReport | null): HTMLElement {
 }
 
 /** Settings → General → Weekly recap. The prefs live with the history in Rust. */
-function recapRows(): HTMLElement[] {
+function recapRows(quiet = false): HTMLElement[] {
   const T = {
     label: t("Weekly recap"),
     keep: t("Keep a history of my coding sessions"),
@@ -1675,7 +1727,7 @@ function recapRows(): HTMLElement[] {
   };
   const feedback = h("span", { class: "hint" });
   const sw = toggle(true, (v) => { void Bridge.recapSetEnabled(v); });
-  void Bridge.recapPrefs().then((prefs) => {
+  if (!quiet) void Bridge.recapPrefs().then((prefs) => {
     if (prefs) sw.setAttribute("aria-checked", String(prefs.enabled));
   });
   const clearBtn = h("button", {
@@ -1736,7 +1788,8 @@ interface Page {
   group?: string;
   /** Set on a feature's page: the switch and the gate. */
   feature?: FeatureInfo;
-  build(): Promise<Node[]> | Node[];
+  /** `quiet` builds the page only for the search's label index: no probes, no calls. */
+  build(quiet?: boolean): Promise<Node[]> | Node[];
 }
 
 const GROUP_TITLE: Record<FeatureInfo["group"], string> = {
@@ -1755,23 +1808,36 @@ function sanitize() {
   settings = { ...settings, ...sanitizeDeclared(settings) };
 }
 
-async function pillsPage(): Promise<Node[]> {
+async function pillsPage(quiet = false): Promise<Node[]> {
   sanitize();
-  const connected: Record<string, boolean> = { ...((await Bridge.agentHooksStatus()) ?? {}) };
-  for (const def of availablePills()) {
+  // Quiet: no hooks status and no keychain, so every pill shows as not configured.
+  const connected: Record<string, boolean> = quiet ? {} : { ...((await Bridge.agentHooksStatus()) ?? {}) };
+  if (!quiet) for (const def of availablePills()) {
     if (def.connect.kind === "key") connected[def.id] = (await Bridge.secretPresent(def.connect.key)) ?? false;
   }
   return [activePillsSection(connected)];
 }
 
-async function agentsBody(): Promise<Node[]> {
-  const status = (await Bridge.hooksStatus()) ?? {
+async function agentsBody(quiet = false): Promise<Node[]> {
+  const status = (quiet ? null : await Bridge.hooksStatus()) ?? {
     installed: false, planRelayInstalled: false, autoLaunch: false, settingsPath: "", hookPath: "", hookReady: false,
   };
-  return [claudeSection(status), agentsSection(await Bridge.agentHooksList()), wslSection(), sshSection(), planSection(status)];
+  return [
+    claudeSection(status), agentsSection(quiet ? null : await Bridge.agentHooksList()), wslSection(), sshSection(), planSection(status),
+  ];
 }
 
-async function chatBody(): Promise<Node[]> {
+async function chatBody(quiet = false): Promise<Node[]> {
+  // Quiet: no keychain, no prefs, no CLI listing, and no local model scan.
+  const prefs: ChatPrefs = quiet
+    ? { openrouterFree: false, cliOrder: [], taskFolders: [], gatewayUrl: "", calendarAgenda: false, imageRefusal: "", mcpServers: [] }
+    : await chatPrefs();
+  if (quiet) {
+    return [
+      apiSection(false), await chatExtrasSection(prefs, true), await mcpSection(prefs, true), chatProvidersSection({}, () => {}, prefs),
+      localSection(false, true), cliSection(prefs, new Set()),
+    ];
+  }
   const hasKey = (await Bridge.secretPresent("anthropic-api-key")) ?? false;
   const chatKeys: Record<string, boolean> = {};
   for (const def of CLOUD) {
@@ -1779,7 +1845,6 @@ async function chatBody(): Promise<Node[]> {
     chatKeys[key] = (await Bridge.secretPresent(key)) ?? false;
   }
   const customKey = (await Bridge.secretPresent(CUSTOM_SERVER_KEY)) ?? false;
-  const prefs = await chatPrefs();
   const installed = new Set((await installedClis()).map((cli) => cli.id));
   return [
     apiSection(hasKey), await chatExtrasSection(prefs), await mcpSection(prefs), chatProvidersSection(chatKeys, () => {}, prefs), localSection(customKey),
@@ -1787,22 +1852,22 @@ async function chatBody(): Promise<Node[]> {
   ];
 }
 
-async function integrationsBody(): Promise<Node[]> {
+async function integrationsBody(quiet = false): Promise<Node[]> {
   sanitize();
   const present: Record<string, boolean> = {};
-  for (const k of [
+  if (!quiet) for (const k of [
     "stripe-api-key", "github-token", "forge-url", "forge-token", "vercel-token",
     "n8n-url", "n8n-api-key", "resend-api-key", "notion-api-key", "calcom-api-key", "linear-api-key",
   ]) present[k] = (await Bridge.secretPresent(k)) ?? false;
-  return [integrationsSection(present)];
+  return [integrationsSection(present, quiet)];
 }
 
 /** What the base's own features show under their switch; the others use `settings(cx)`. */
-const BASE_BODY: Record<string, () => Promise<Node[]> | Node[]> = {
+const BASE_BODY: Record<string, (quiet: boolean) => Promise<Node[]> | Node[]> = {
   agents: agentsBody,
   chat: chatBody,
   integrations: integrationsBody,
-  recap: () => [h("section", {}, ...recapRows())],
+  recap: (quiet) => [h("section", {}, ...recapRows(quiet))],
 };
 
 const BASE_KEYWORDS: Record<string, string[]> = {
@@ -1849,6 +1914,7 @@ const FEATURE_LINE: Record<string, string> = {
   shelf: "A place to park files and drag them out again later.",
   sysmon: "Processor, memory, disk and network, with processes and ports.",
   "timers-downloads": "Timers and Pomodoro on the island.",
+  voice: "Voice assistant: spoken actions, answers and the wake phrase.",
   weather: "The forecast for a city you choose.",
   "window-layout": "Snap windows to halves, thirds and quarters with shortcuts.",
 };
@@ -1883,11 +1949,12 @@ function privacyPage(): HTMLElement[] {
 
 const CORE: Page[] = [
   { id: "general", title: N_("General"), icon: "gear", keywords: ["language", "startup", "autostart", "launch", "system"], build: generalPage },
-  { id: "island", title: N_("Island"), icon: "island", keywords: ["hover", "outline", "auto-close", "display", "screen", "monitor", "activities", "wake"], build: islandPage },
+  { id: "island", title: N_("Island"), icon: "island", keywords: ["hover", "outline", "auto-close", "display", "screen", "monitor", "activities", "wake", "tabs", "order", "reorder", "sections"], build: islandPage },
   { id: "mascot", title: N_("Mascot"), icon: "sparkle", keywords: ["character", "dot", "face"], build: mascotPage },
   { id: "pills", title: N_("Pills"), icon: "grid", keywords: ["active pills", "main tool", "colors", "tools"], build: pillsPage },
   { id: "sounds", title: N_("Sounds"), icon: "volume", keywords: ["sound", "volume", "mute", "folder", "custom"], build: soundsPage },
-  { id: "shortcuts", title: N_("Shortcuts"), icon: "keyboard", keywords: ["keys", "hotkeys", "keyboard", "keybinding"], build: async () => [shortcutsSection(await Bridge.shortcutsStatus())] },
+  { id: "shortcuts", title: N_("Shortcuts"), icon: "keyboard", keywords: ["keys", "hotkeys", "keyboard", "keybinding"],
+    build: async (quiet) => [shortcutsSection(quiet ? null : await Bridge.shortcutsStatus())] },
   { id: "features", title: N_("Features"), icon: "sliders", keywords: ["turn on", "turn off", "switch", "enable", "disable"], build: featuresPage },
   { id: "privacy", title: N_("Privacy"), icon: "shield", keywords: ["telemetry", "network", "data"], group: "app", build: privacyPage },
 ];
@@ -1900,12 +1967,12 @@ function featurePages(): Page[] {
     keywords: [...(BASE_KEYWORDS[f.id] ?? []), f.group, f.id],
     group: f.group,
     feature: f,
-    build: () => featureBody(f),
+    build: (quiet) => featureBody(f, quiet),
   }));
 }
 
 /** The switch the core draws above every feature's page, then the feature's own body. */
-async function featureBody(f: FeatureInfo): Promise<Node[]> {
+async function featureBody(f: FeatureInfo, quiet = false): Promise<Node[]> {
   const hint = h("span", { class: "row-hint", text: f.on && !f.running ? t("Not running") : "" });
   const sw = toggle(f.on, (on) => {
     hint.textContent = "";
@@ -1922,8 +1989,8 @@ async function featureBody(f: FeatureInfo): Promise<Node[]> {
   try {
     const base = BASE_BODY[f.id];
     const mod = featureById(f.id);
-    if (base) out.push(...(await base()));
-    else if (mod?.settings) out.push(mod.settings(featureCtx(f.id)));
+    if (base) out.push(...(await base(quiet)));
+    else if (mod?.settings) out.push(mod.settings(quiet ? quietCtx(f.id) : featureCtx(f.id)));
   } catch (err) {
     out.push(h("div", { class: "notice err", text: String(err) }));
   }
@@ -1942,6 +2009,107 @@ function matches(p: Page): boolean {
   return !q || [t(p.title), p.title, ...p.keywords].some((s) => fold(s).includes(q));
 }
 
+/** Where a page's own option labels sit: card rows, base section lines, shortcuts and pills. */
+const OPTION_SELECTOR = ".row > .row-label, .line > label, .shortcut-name, .pill-row > .name";
+
+/** An option label, and the page it is on. */
+interface OptionHit {
+  page: Page;
+  label: string;
+}
+
+/** Each page's option labels, read once from a quiet build; rebuilt with the language or the feature list. */
+let optionIndex: { page: Page; labels: string[] }[] | null = null;
+let indexBuild: Promise<void> | null = null;
+
+/**
+ * Reads the labels off screen: every page is built with `quiet`, so no builder
+ * asks Rust, scans for local models or touches the keychain just because
+ * something was typed in the search box.
+ */
+function buildOptionIndex(): Promise<void> {
+  return (indexBuild ??= (async () => {
+    const out: { page: Page; labels: string[] }[] = [];
+    for (const page of allPages()) {
+      // A quiet build registers redrawers and listeners the page on screen keeps.
+      const views = declaredViews.length;
+      const redraw = localRedraw;
+      const listener = shortcutsListener;
+      let nodes: Node[];
+      try {
+        nodes = await page.build(true);
+        // A page that fills itself from promises has its rows one tick later.
+        await new Promise<void>((done) => window.setTimeout(() => done(), 0));
+      } catch {
+        continue;
+      } finally {
+        declaredViews.length = views;
+        localRedraw = redraw;
+        shortcutsListener = listener;
+      }
+      const body = h("div", {}, ...nodes);
+      const labels = [...body.querySelectorAll<HTMLElement>(OPTION_SELECTOR)]
+        .map((el) => (el.textContent ?? "").trim())
+        .filter((text) => text.length > 0);
+      if (labels.length) out.push({ page, labels: [...new Set(labels)] });
+    }
+    optionIndex = out;
+    if (query.trim()) drawNav();
+  })());
+}
+
+/** The pages changed, or the language did: the labels are read again when needed. */
+function invalidateOptions() {
+  optionIndex = null;
+  indexBuild = null;
+}
+
+/** The options whose label matches what is typed. */
+function optionHits(): OptionHit[] {
+  const q = fold(query.trim());
+  if (!q || !optionIndex) return [];
+  const out: OptionHit[] = [];
+  for (const { page, labels } of optionIndex) {
+    for (const label of labels) if (fold(label).includes(q)) out.push({ page, label });
+  }
+  return out;
+}
+
+/** The option a result click opens, marked once its page is on screen. */
+let pendingReveal: { page: string; label: string } | null = null;
+
+function goOption(hit: OptionHit) {
+  pendingReveal = { page: hit.page.id, label: hit.label };
+  go(hit.page.id);
+}
+
+/** Marks an option on the page just shown, waiting a moment for a late build. */
+function revealOption(label: string) {
+  const wanted = label.trim();
+  const find = () =>
+    [...pageEl.querySelectorAll<HTMLElement>(OPTION_SELECTOR)]
+      .find((el) => (el.textContent ?? "").trim() === wanted) ?? null;
+  const flash = (el: HTMLElement) => {
+    el.classList.add("found");
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    window.setTimeout(() => el.classList.remove("found"), 1800);
+  };
+  const there = find();
+  if (there) return flash(there);
+  const observer = new MutationObserver(() => {
+    const el = find();
+    if (!el) return;
+    stop();
+    flash(el);
+  });
+  const timer = window.setTimeout(stop, 1200);
+  function stop() {
+    observer.disconnect();
+    window.clearTimeout(timer);
+  }
+  observer.observe(pageEl, { childList: true, subtree: true });
+}
+
 let query = "";
 let current = "general";
 let navToken = 0;
@@ -1951,10 +2119,14 @@ const pageEl = h("div", { class: "page" });
 const search = field({
   icon: "search",
   placeholder: t("Search settings"),
-  onInput: (v) => { query = v; drawNav(); },
+  // New results start at the top; drawNav keeps the sidebar where it is otherwise.
+  onInput: (v) => { query = v; if (nav.parentElement) nav.parentElement.scrollTop = 0; drawNav(); },
   onEnter: () => {
+    // A page first; otherwise the first option the search found.
     const first = allPages().find(matches);
-    if (first) go(first.id);
+    if (first) return go(first.id);
+    const [option] = optionHits();
+    if (option) goOption(option);
   },
 });
 
@@ -1964,6 +2136,10 @@ function go(id: string) {
 }
 
 function drawNav() {
+  // The sidebar is the scroller; emptying the nav collapses it and the browser
+  // clamps the offset to 0, so it is put back once the items are there again.
+  const scroller = nav.parentElement;
+  const top = scroller?.scrollTop ?? 0;
   clear(nav);
   const shown = allPages().filter(matches);
   const item = (p: Page): ListItem => ({
@@ -1983,7 +2159,22 @@ function drawNav() {
     block(t(GROUP_TITLE[g]), shown.filter((p) => p.group === g));
   }
   block(t("App"), shown.filter((p) => p.group === "app"));
-  if (!shown.length) nav.append(h("p", { class: "hint", style: "padding:var(--s-3)", text: t("No settings match.") }));
+  const hits = optionHits();
+  if (hits.length) {
+    nav.append(h("div", { class: "section-title", text: t("Options") }));
+    nav.append(list(hits.map((hit) => ({
+      label: hit.label,
+      icon: hit.page.icon,
+      meta: t(hit.page.title),
+      onClick: () => goOption(hit),
+    }))));
+  }
+  if (!shown.length && !hits.length) {
+    nav.append(h("p", { class: "hint", style: "padding:var(--s-3)", text: t("No settings match.") }));
+  }
+  // The labels are read the first time something is typed, then kept.
+  if (query.trim() && !optionIndex) void buildOptionIndex();
+  if (scroller) scroller.scrollTop = top;
 }
 
 async function showPage() {
@@ -2002,6 +2193,95 @@ async function showPage() {
   clear(pageEl);
   pageEl.append(h("h1", { text: t(page.title) }), ...body);
   pageEl.scrollTop = scroll;
+  if (pendingReveal) {
+    const reveal = pendingReveal.page === page.id ? pendingReveal : null;
+    pendingReveal = null;
+    if (reveal) revealOption(reveal.label);
+  }
+}
+
+// ── The sidebar's width ───────────────────────────────────────────────────────
+
+/** The sidebar's default width, and what the grip allows either side of it. */
+const SIDEBAR = { min: 160, max: 360, def: 200 };
+
+/** Within the grip's limits, and never more than 45 % of the window (CSS holds the same line). */
+function clampSidebar(width: number, room: number): number {
+  return Math.round(Math.min(Math.max(width, SIDEBAR.min), SIDEBAR.max, room * 0.45));
+}
+
+/**
+ * The grip between the sidebar and the page (`role=separator`): dragged with the
+ * pointer, stepped with ← / →, reset with a double-click. The width is one CSS
+ * variable on the shell, and it is saved once, when the drag or the key ends.
+ */
+function sidebarGrip(shell: HTMLElement): HTMLElement {
+  const grip = h("div", {
+    class: "sidebar-grip",
+    role: "separator",
+    "aria-orientation": "vertical",
+    tabindex: "0",
+    title: t("Resize sidebar"),
+    "aria-label": t("Resize sidebar"),
+  });
+  // The shell has no width until it is in the page; the window's is what it will have.
+  const room = () => shell.clientWidth || window.innerWidth;
+  // Arabic reads right to left: the sidebar is on the right and a rightward drag narrows it.
+  const rtl = () => getComputedStyle(document.documentElement).direction === "rtl";
+  let width = clampSidebar(settings.sidebarWidth ?? SIDEBAR.def, room());
+  let startX = 0;
+  let startW = 0;
+
+  const show = () => {
+    shell.style.setProperty("--sidebar-w", `${width}px`);
+    grip.setAttribute("aria-valuemin", String(SIDEBAR.min));
+    grip.setAttribute("aria-valuemax", String(SIDEBAR.max));
+    grip.setAttribute("aria-valuenow", String(width));
+  };
+  const commit = () => {
+    if (settings.sidebarWidth === width) return;
+    settings.sidebarWidth = width;
+    void save();
+  };
+  const set = (next: number) => {
+    width = clampSidebar(next, room());
+    show();
+  };
+
+  grip.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    startX = e.clientX;
+    startW = width;
+    grip.classList.add("dragging");
+    grip.setPointerCapture(e.pointerId);
+  });
+  grip.addEventListener("pointermove", (e) => {
+    if (!grip.classList.contains("dragging")) return;
+    set(startW + (e.clientX - startX) * (rtl() ? -1 : 1));
+  });
+  const end = () => {
+    if (!grip.classList.contains("dragging")) return;
+    grip.classList.remove("dragging");
+    commit();
+  };
+  grip.addEventListener("pointerup", end);
+  grip.addEventListener("pointercancel", end);
+  grip.addEventListener("dblclick", () => {
+    set(SIDEBAR.def);
+    commit();
+  });
+  grip.addEventListener("keydown", (e) => {
+    const step = e.key === "ArrowRight" ? 8 : e.key === "ArrowLeft" ? -8 : 0;
+    if (step) set(width + step * (rtl() ? -1 : 1));
+    else if (e.key === "Home") set(SIDEBAR.min);
+    else if (e.key === "End") set(SIDEBAR.max);
+    else return;
+    e.preventDefault();
+    commit();
+  });
+  show();
+  return grip;
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
@@ -2023,16 +2303,17 @@ async function main() {
   await showOnboarding(root);
 
   clear(root);
-  root.append(
-    h("div", { class: "win-body shell" },
-      h("aside", { class: "sidebar" }, search, nav, h("div", { class: "version", text: `${BRAND.name} ${version}` })),
-      pageEl,
-    ),
+  const shell = h("div", { class: "win-body shell" },
+    h("aside", { class: "sidebar" }, search, nav, h("div", { class: "version", text: `${BRAND.name} ${version}` })),
+    pageEl,
   );
+  shell.insertBefore(sidebarGrip(shell), pageEl);
+  root.append(shell);
   window.addEventListener("hashchange", () => void showPage());
   // A switch was flipped (here, the tray or a shortcut): the sidebar and the page follow.
-  onFeaturesChanged(() => void showPage());
+  onFeaturesChanged(() => { invalidateOptions(); void showPage(); });
   onLanguageChange(() => {
+    invalidateOptions();
     applyDirection();
     search.input.placeholder = t("Search settings");
     void showPage();

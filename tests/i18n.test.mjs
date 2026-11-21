@@ -247,6 +247,7 @@ const NOT_TEXT = new Set([
   "finished", // a task state and a pill badge
   "unknown", // a CI state
   "Resend", // the service's name (the Mac's "Resend" is a button: send again)
+  "Home", // the name of a key (the sidebar grip's keyboard step), not the Home page's title
 ]);
 
 test("no known user-facing English literal outside t() in the views and settings", () => {

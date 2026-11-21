@@ -28,7 +28,8 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use svc_sysevents::Session;
-use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
+use windows::core::w;
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::System::Threading::{
@@ -39,11 +40,17 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, LASTINPUTINFO, MAPVK_VK_TO_VSC,
     MOUSEEVENTF_HWHEEL, MOUSEEVENTF_WHEEL, MOUSEINPUT, VIRTUAL_KEY,
 };
+use windows::Win32::UI::Input::{
+    GetRawInputData, RegisterRawInputDevices, HRAWINPUT, RAWINPUT, RAWINPUTDEVICE, RAWINPUTHEADER, RIDEV_INPUTSINK,
+    RIDEV_REMOVE, RID_INPUT,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetForegroundWindow, GetMessageW, PeekMessageW, PostThreadMessageW, SetWindowsHookExW,
-    UnhookWindowsHookEx, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, PM_NOREMOVE, WH_KEYBOARD_LL,
-    WH_MOUSE_LL, WM_APP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP,
+    CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos, GetForegroundWindow,
+    GetMessageW, PeekMessageW, PostThreadMessageW, RegisterClassW, SetWindowsHookExW, UnhookWindowsHookEx,
+    UnregisterClassW, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, PM_NOREMOVE, WH_KEYBOARD_LL, WH_MOUSE_LL,
+    WM_APP, WM_INPUT, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
+    WM_MOUSEWHEEL, WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 // ── What a subscriber is told ─────────────────────────────────────────────────
@@ -375,6 +382,9 @@ fn run(ready: mpsc::Sender<u32>) {
         // Makes the thread's message queue, so that what is posted next is not lost.
         let _ = PeekMessageW(&mut msg, None, WM_USER, WM_USER, PM_NOREMOVE);
         let _ = ready.send(GetCurrentThreadId());
+        // The raw wheel sink: a hidden window of this thread, so a wheel turn still arrives while
+        // an elevated window has the foreground and Windows does not call the mouse hook at all.
+        let raw = raw_sink();
         // Wheel turns a subscriber asks for are sent by a thread beside this one (see `inject_wheel`).
         let (wheels, turns) = mpsc::channel::<(i32, bool)>();
         std::thread::spawn(move || {
@@ -390,12 +400,17 @@ fn run(ready: mpsc::Sender<u32>) {
             match msg.message {
                 SYNC => install(&mut hooks, false),
                 REFRESH => install(&mut hooks, true),
+                // The sink's own messages (WM_INPUT).
+                _ if !msg.hwnd.is_invalid() => {
+                    let _ = DispatchMessageW(&msg);
+                }
                 _ => {}
             }
         }
         for hook in hooks.into_iter().flatten() {
             let _ = UnhookWindowsHookEx(hook);
         }
+        raw_sink_end(raw);
         ON[0].store(false, Relaxed);
         ON[1].store(false, Relaxed);
         // The sending thread ends with its channel.
@@ -406,6 +421,113 @@ fn run(ready: mpsc::Sender<u32>) {
 thread_local! {
     /// On the hook thread only: where its wheel turns go.
     static WHEELS: std::cell::RefCell<Option<mpsc::Sender<(i32, bool)>>> = const { std::cell::RefCell::new(None) };
+}
+
+// ── The raw wheel sink ────────────────────────────────────────────────────────
+//
+// A wheel turn is the one mouse event a feature waits for over a window that is not its
+// own (the tray icon's). The hook reads it -- except while an elevated window has the
+// foreground: then Windows calls no low-level hook of this unelevated process, and the
+// wheel goes to that window and nowhere else. Raw input is not a hook: registered with
+// RIDEV_INPUTSINK, the hidden window below is told of the wheel even as a background
+// window, whatever has the foreground. Only the wheel is taken from it (the hook is
+// the only place that can swallow a click), and only while the hooks are blind, so no
+// event is ever told twice.
+
+/// The sink window's class (hidden, no taskbar entry, never activated).
+const RAW_CLASS: windows::core::PCWSTR = w!("lintel-input-raw");
+/// `RAWMOUSE.usButtonFlags`: the vertical and the horizontal wheel (Winuser.h; the
+/// windows crate exposes the constants of the message, not those of the packet).
+const RAW_WHEEL: u16 = 0x0400;
+const RAW_HWHEEL: u16 = 0x0800;
+/// `RAWINPUTHEADER.dwType` of a mouse packet: `RIM_TYPEMOUSE`.
+const RAW_MOUSE: u32 = 0;
+
+/// The hidden window and its registration; `None` when neither could be made.
+struct RawSink {
+    hwnd: HWND,
+    module: HINSTANCE,
+}
+
+unsafe fn raw_sink() -> Option<RawSink> {
+    let module = unsafe { GetModuleHandleW(None) }.map(|m| HINSTANCE(m.0)).unwrap_or_default();
+    let class = WNDCLASSW {
+        lpfnWndProc: Some(raw_proc),
+        hInstance: module.into(),
+        lpszClassName: RAW_CLASS,
+        ..Default::default()
+    };
+    let _ = unsafe { RegisterClassW(&class) };
+    let hwnd = unsafe {
+        CreateWindowExW(
+            WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+            RAW_CLASS,
+            w!(""),
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            None,
+            None,
+            Some(module.into()),
+            None,
+        )
+    };
+    let Ok(hwnd) = hwnd else { return None };
+    let devices = [RAWINPUTDEVICE { usUsagePage: 0x01, usUsage: 0x02, dwFlags: RIDEV_INPUTSINK, hwndTarget: hwnd }];
+    match unsafe { RegisterRawInputDevices(&devices, std::mem::size_of::<RAWINPUTDEVICE>() as u32) } {
+        Ok(()) => Some(RawSink { hwnd, module }),
+        Err(err) => {
+            // Another window of this process already holds the mouse; the tray wheel then waits
+            // for a foreground window that is not elevated, as it did before.
+            notch_core::log::line(format!("input: the raw wheel sink could not be registered: {err}"));
+            let _ = unsafe { DestroyWindow(hwnd) };
+            None
+        }
+    }
+}
+
+unsafe fn raw_sink_end(sink: Option<RawSink>) {
+    let Some(sink) = sink else { return };
+    let devices = [RAWINPUTDEVICE { usUsagePage: 0x01, usUsage: 0x02, dwFlags: RIDEV_REMOVE, hwndTarget: HWND::default() }];
+    let _ = unsafe { RegisterRawInputDevices(&devices, std::mem::size_of::<RAWINPUTDEVICE>() as u32) };
+    let _ = unsafe { DestroyWindow(sink.hwnd) };
+    let _ = unsafe { UnregisterClassW(RAW_CLASS, Some(sink.module.into())) };
+}
+
+unsafe extern "system" fn raw_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    // Only while the hooks are blind: otherwise the hook has told the subscribers already.
+    if msg == WM_INPUT && blocked() {
+        let mut bytes = [0u8; 128];
+        let mut size = bytes.len() as u32;
+        let got = unsafe {
+            GetRawInputData(
+                HRAWINPUT(lparam.0 as *mut _),
+                RID_INPUT,
+                Some(bytes.as_mut_ptr() as *mut _),
+                &mut size,
+                std::mem::size_of::<RAWINPUTHEADER>() as u32,
+            )
+        };
+        if got != 0 && got != u32::MAX {
+            let raw = unsafe { &*(bytes.as_ptr() as *const RAWINPUT) };
+            if raw.header.dwType == RAW_MOUSE {
+                let buttons = unsafe { raw.data.mouse.Anonymous.Anonymous };
+                let (kind, delta) = if buttons.usButtonFlags & RAW_WHEEL != 0 {
+                    (MouseKind::Wheel, buttons.usButtonData as i16 as i32)
+                } else if buttons.usButtonFlags & RAW_HWHEEL != 0 {
+                    (MouseKind::HWheel, buttons.usButtonData as i16 as i32)
+                } else {
+                    return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+                };
+                let mut at = POINT::default();
+                let _ = unsafe { GetCursorPos(&mut at) };
+                tell(&Mouse { kind, x: at.x, y: at.y, delta, injected: false, t: now() });
+            }
+        }
+    }
+    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
 /// Makes the hooks what the lists ask for. `fresh` installs the wanted ones
@@ -515,7 +637,7 @@ unsafe extern "system" fn on_mouse(code: i32, wparam: WPARAM, lparam: LPARAM) ->
             WM_MOUSEHWHEEL => Some(MouseKind::HWheel),
             _ => None,
         };
-        if let (Some(kind), false, Some(list)) = (kind, is_own(raw.dwExtraInfo), current(&MICE)) {
+        if let (Some(kind), false) = (kind, is_own(raw.dwExtraInfo)) {
             let wheel = matches!(kind, MouseKind::Wheel | MouseKind::HWheel);
             let event = Mouse {
                 kind,
@@ -525,19 +647,31 @@ unsafe extern "system" fn on_mouse(code: i32, wparam: WPARAM, lparam: LPARAM) ->
                 injected: raw.flags & LLMHF_INJECTED != 0,
                 t: now(),
             };
-            let release = matches!(kind, MouseKind::Up(_));
-            let (suspended, elevated) = (SUSPENDED.load(Relaxed) != 0, ELEVATED.load(Relaxed));
-            for entry in list.iter() {
-                if !release && (suspended || (entry.injects && elevated)) {
-                    continue;
-                }
-                if (entry.f)(&event) == Verdict::Swallow {
-                    return LRESULT(1);
-                }
+            if tell(&event) {
+                return LRESULT(1);
             }
         }
     }
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+/// One mouse event to every subscriber, in their order: true when one swallows it.
+/// A press, a move or the wheel waits while the hooks are suspended, and while the
+/// window in front runs as administrator a subscriber that injects is skipped (it
+/// could not reach that window anyway). A release always goes through.
+fn tell(event: &Mouse) -> bool {
+    let Some(list) = current(&MICE) else { return false };
+    let release = matches!(event.kind, MouseKind::Up(_));
+    let (suspended, elevated) = (SUSPENDED.load(Relaxed) != 0, ELEVATED.load(Relaxed));
+    for entry in list.iter() {
+        if !release && (suspended || (entry.injects && elevated)) {
+            continue;
+        }
+        if (entry.f)(event) == Verdict::Swallow {
+            return true;
+        }
+    }
+    false
 }
 
 // ── Injecting ─────────────────────────────────────────────────────────────────

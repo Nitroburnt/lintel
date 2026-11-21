@@ -227,7 +227,14 @@ export default defineFeature({
 // ── Calendar section: the day wheel ──────────────────────────────────────────
 
 function weekPage(cx: FeatureCtx) {
-  const el = h("div", { class: "f-calendar-page" });
+  // The four parts are made once and filled by draw(): a list that is built again is a
+  // list that forgets where it was scrolled (sync() runs after any State.notify(), §5.3).
+  const head = h("div", { class: "f-calendar-head" });
+  const strip = h("div", { class: "f-calendar-days" });
+  const list = h("div", { class: "f-calendar-list" });
+  const note = h("p", { class: "f-calendar-note" });
+  note.hidden = true;
+  const el = h("div", { class: "f-calendar-page" }, head, strip, list, note);
   let start = mondayOf(new Date());
   let sel = midnight(new Date());
   let week: Week = { events: [], unsupported: [] };
@@ -248,8 +255,19 @@ function weekPage(cx: FeatureCtx) {
       start = m;
       load();
     }
+    list.scrollTop = 0; // a day opens at its first event
     draw();
   };
+
+  // wheel over the strip turns the day; one step per gesture burst so inertia does not run away
+  strip.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    if (Math.abs(e.deltaY) < 2 && Math.abs(e.deltaX) < 2) return;
+    const now = performance.now();
+    if (now - latch < 140) return;
+    latch = now;
+    go(addDays(sel, (e.deltaY || e.deltaX) > 0 ? 1 : -1));
+  }, { passive: false });
 
   const dayEvents = (d: Date) => {
     const a = d.getTime(), b = addDays(d, 1).getTime();
@@ -264,7 +282,7 @@ function weekPage(cx: FeatureCtx) {
     // Day and month names in the language of the app; the system's own date format when that is the same language.
     const system = navigator.language.toLowerCase().startsWith(language().split("-")[0].toLowerCase());
     const fmt = (d: Date, o: Intl.DateTimeFormatOptions) => d.toLocaleDateString(system ? [] : language(), o);
-    const head = h("div", { class: "f-calendar-head" },
+    head.replaceChildren(
       h("b", { text: `${fmt(start, { month: "short", day: "numeric" })} – ${fmt(end, { month: start.getMonth() === end.getMonth() ? undefined : "short", day: "numeric" })}` }),
       h("span", { class: "isl-gap" }),
       iconBtn("chevr", cx.t("Previous week"), () => go(addDays(sel, -7))),
@@ -272,7 +290,7 @@ function weekPage(cx: FeatureCtx) {
       iconBtn("chevr", cx.t("Next week"), () => go(addDays(sel, 7))));
     head.children[2].classList.add("f-calendar-flip");
 
-    const strip = h("div", { class: "f-calendar-days" },
+    strip.replaceChildren(
       ...Array.from({ length: 7 }, (_, i) => {
         const d = addDays(start, i);
         const n = dayEvents(d).length;
@@ -281,20 +299,11 @@ function weekPage(cx: FeatureCtx) {
           h("b", { text: String(d.getDate()) }),
           h("i", { class: n ? "has" : "" }));
       }));
-    // wheel over the strip turns the day; one step per gesture burst so inertia does not run away
-    strip.addEventListener("wheel", (e) => {
-      e.preventDefault();
-      if (Math.abs(e.deltaY) < 2 && Math.abs(e.deltaX) < 2) return;
-      const now = performance.now();
-      if (now - latch < 140) return;
-      latch = now;
-      go(addDays(sel, (e.deltaY || e.deltaX) > 0 ? 1 : -1));
-    }, { passive: false });
 
-    const list = dayEvents(sel);
+    const events = dayEvents(sel);
     const now = Date.now();
-    const body = list.length
-      ? list.map((e) =>
+    const body = events.length
+      ? events.map((e) =>
           h("div", { class: "f-calendar-ev", onclick: (ev: Event) => ((ev.currentTarget as HTMLElement).querySelector(".f-calendar-desc")?.classList.toggle("open")) },
             h("span", { class: "f-calendar-bar", style: `background:${e.color}` }),
             h("span", { class: "f-calendar-time", text: e.allDay ? cx.t("All day") : `${clock(e.start)}${e.end > e.start ? " – " + clock(e.end) : ""}` }),
@@ -306,10 +315,10 @@ function weekPage(cx: FeatureCtx) {
             e.link && e.end > now ? btn(cx.t("Join"), "primary", () => join(e.link!)) : null,
             !e.allDay && e.start <= now && e.end > now ? h("small", { class: "f-calendar-tag now", text: cx.t("Now") }) : null))
       : [h("p", { class: "f-calendar-empty", text: hasCals || bookings.length ? cx.t("Nothing planned.") : cx.t("No calendars yet. Paste an ICS link in Settings, Calendar.") })];
-    const note = week.unsupported.length
-      ? h("p", { class: "f-calendar-note", text: `${cx.t("Unsupported rule")}: ${[...new Set(week.unsupported.map((u) => u.title))].slice(0, 3).join(", ")}` })
-      : "";
-    el.replaceChildren(head, strip, h("div", { class: "f-calendar-list" }, ...body), note);
+    list.replaceChildren(...body);
+    const unsupported = [...new Set(week.unsupported.map((u) => u.title))].slice(0, 3);
+    note.hidden = unsupported.length === 0;
+    note.textContent = unsupported.length ? `${cx.t("Unsupported rule")}: ${unsupported.join(", ")}` : "";
   }
 
   const watcher = () => load();
@@ -321,6 +330,7 @@ function weekPage(cx: FeatureCtx) {
       sel = midnight(new Date());
       watchers.add(watcher);
       cx.call("seen", { visible: true });
+      list.scrollTop = 0;
       draw();
       load();
     },
@@ -329,9 +339,9 @@ function weekPage(cx: FeatureCtx) {
       watchers.delete(watcher);
       cx.call("seen", { visible: false });
     },
-    sync() {
-      if (shown) draw();
-    },
+    // Not drawn here: sync() follows any State.notify(), and rebuilding the list would
+    // throw it back to the top. Data changes come through watchers → load(), and show() draws.
+    sync() {},
   };
 }
 

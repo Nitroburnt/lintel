@@ -23,6 +23,32 @@
 .f-displays-keepawake-pic.done { box-shadow: 0 0 0 2px var(--ok); }
 .f-displays-keepawake-pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 
+/* The brightness and contrast panel: the window behind the tray icon. */
+.f-displays-keepawake-panel-win { height: 100%; }
+.f-displays-keepawake-panel { display: flex; flex-direction: column; gap: var(--s-3); padding: var(--s-3) var(--s-4) var(--s-4); box-sizing: border-box; }
+.f-displays-keepawake-device { position: relative; display: flex; align-items: center; gap: var(--s-2); }
+.f-displays-keepawake-device-ico { display: flex; color: var(--ink-2); }
+.f-displays-keepawake-device-text { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.f-displays-keepawake-device-text b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 var(--t-lg) var(--font); color: var(--ink); }
+.f-displays-keepawake-device-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 var(--t-xs) var(--font); color: var(--dim); }
+.f-displays-keepawake-row { display: flex; align-items: center; gap: var(--s-3); }
+.f-displays-keepawake-row .ico, .f-displays-keepawake-ico { display: flex; color: var(--ink-2); }
+.f-displays-keepawake-row .meter { flex: 1; transform-origin: left center; transition: transform var(--d-fast) var(--ease-out); }
+.f-displays-keepawake-row .meter:hover:not([aria-disabled="true"]) { transform: scaleY(1.35); }
+.f-displays-keepawake-row.f-displays-keepawake-off { opacity: .45; }
+.f-displays-keepawake-row .meter[aria-disabled="true"] { cursor: default; }
+.f-displays-keepawake-num { min-width: 30px; text-align: center; font: 500 var(--t-sm) var(--font); font-variant-numeric: tabular-nums; color: var(--ink-2); }
+@keyframes f-displays-keepawake-flash { 0%, 40% { background: color-mix(in srgb, var(--accent) 28%, transparent); } 100% { background: transparent; } }
+.f-displays-keepawake-num.f-displays-keepawake-changed { color: var(--accent); border-radius: var(--r-sm); animation: f-displays-keepawake-flash 1.6s var(--ease-out); }
+/* The same width as the number column under it, its arrow centred in it: one line down the
+   right edge. */
+.f-displays-keepawake-device .f-displays-keepawake-refresh { flex: none; width: 30px; height: 24px; }
+.f-displays-keepawake-refresh.f-displays-keepawake-spin svg { animation: f-displays-keepawake-spin .6s var(--ease-out); }
+@keyframes f-displays-keepawake-spin { to { transform: rotate(360deg); } }
+/* Out of the flow, left of the button: the message may come and go without moving it. */
+.f-displays-keepawake-note { position: absolute; right: 38px; top: 50%; transform: translateY(-50%); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; pointer-events: none; font: 400 var(--t-xs) var(--font); color: var(--dim); }
+.f-displays-keepawake-devices { display: flex; flex-wrap: wrap; gap: var(--s-1); margin-top: auto; }
+
 /* The dimming overlay window: only its opacity changes. The window itself is click-through. */
 .f-displays-keepawake-dim { position: fixed; inset: 0; background: var(--bg); opacity: 0; pointer-events: none; }
 @media (prefers-reduced-motion: no-preference) { .f-displays-keepawake-dim { transition: opacity var(--d-fast) var(--ease-out); } }

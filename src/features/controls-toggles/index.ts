@@ -32,6 +32,7 @@ function buildControls(cx: FeatureCtx): SectionHost {
   let lastSend = 0;
   const vol = slider(0, {
     label: t("Volume"),
+    wheel: true,
     onInput: (f) => {
       if (Date.now() - lastSend > 60) {
         lastSend = Date.now();
@@ -49,8 +50,12 @@ function buildControls(cx: FeatureCtx): SectionHost {
   const DISPLAYS = "displays-keepawake";
   let display: string | null = null;
   let lastBri = 0;
-  const setBri = (f: number) =>
+  // Every write is stamped: the poll below leaves the bar alone for a while after one, so that a
+  // level that is still on its way to the hardware is not drawn back from the panel's old reading.
+  const setBri = (f: number) => {
+    lastBri = Date.now();
     void (display ? featureCtx(DISPLAYS).call("set", { id: display, level: f }) : cx.call("brightness", { level: f }));
+  };
   const readBri = async (): Promise<number | null> => {
     display = null;
     if (!featureOn(DISPLAYS)) return cx.call<number | null>("brightness_get");
@@ -59,14 +64,20 @@ function buildControls(cx: FeatureCtx): SectionHost {
     display = d?.id ?? null;
     return d?.level ?? null;
   };
+  // What the panel reports now, for the display picked above: the only way a change made with the
+  // monitor's own buttons (or another program) can reach this bar.
+  const levelBri = async (): Promise<number | null> => {
+    if (!featureOn(DISPLAYS)) return cx.call<number | null>("brightness_get");
+    if (!display) return null;
+    const list = await featureCtx(DISPLAYS).call<{ id: string; level: number }[]>("displays");
+    return list?.find((x) => x.id === display)?.level ?? null;
+  };
   const bri = slider(0, {
     label: t("Brightness"),
+    wheel: true,
     // While dragged, only the displays feature is written to: a PowerShell start per step would pile up.
     onInput: (f) => {
-      if (display && Date.now() - lastBri > 120) {
-        lastBri = Date.now();
-        setBri(f);
-      }
+      if (display && Date.now() - lastBri > 120) setBri(f);
     },
     onChange: setBri,
   });
@@ -162,6 +173,16 @@ function buildControls(cx: FeatureCtx): SectionHost {
     rail.replaceChildren(dark, hid, icons, bin, lock, off, ...others);
   }
 
+  /** The poll while the section is on screen: the volume, and the brightness the panel reports. */
+  function tick() {
+    void refresh();
+    if (briRow.hidden || bri.classList.contains("dragging") || Date.now() - lastBri < 1500) return;
+    void levelBri().then((b) => {
+      if (b == null) return;
+      if (Math.abs(Number(bri.style.getPropertyValue("--v") || 0) - b) >= 0.01) setMeter(bri, b);
+    });
+  }
+
   const el = h("div", { class: "f-controls-toggles-page" }, volRow, briRow, rail, ask);
   return {
     el,
@@ -173,7 +194,7 @@ function buildControls(cx: FeatureCtx): SectionHost {
         briRow.hidden = b == null;
         if (b != null) setMeter(bri, b);
       });
-      poll = window.setInterval(refresh, 2000);
+      poll = window.setInterval(tick, 2000);
     },
     hide() {
       clearInterval(poll);

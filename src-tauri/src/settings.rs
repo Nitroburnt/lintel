@@ -57,6 +57,10 @@ pub struct Settings {
     /// The cards of the Dashboard: "both", "now" (the player and the agents),
     /// "levels" (the levels and the next event), or "off" (no Dashboard).
     pub home_cards: String,
+    /// The sections that are tabs of the open island's header, in the user's
+    /// order (Settings › Island, "Tabs in the island", src/island/sections.ts).
+    /// None: the first few of the default order; empty: no section tabs.
+    pub island_tabs: Option<Vec<String>>,
     /// "The small island stays": "moment" (it leaves by itself), "agent" (it
     /// stays while an agent session works or waits) or "always" (until the user
     /// puts it away).
@@ -71,6 +75,9 @@ pub struct Settings {
     pub island_drag: bool,
     /// Where the island was dragged to (src/island/place.ts). None: the top centre.
     pub island_spot: Option<IslandSpot>,
+    /// The settings window's sidebar, in px: dragged with the grip between the
+    /// sidebar and the page (src/settings/main.ts), 160 to 360.
+    pub sidebar_width: f64,
     pub autostart: bool,
     pub hooks_installed: bool,
     /// Another session's finish or error opens its card for a moment (off: a badge only).
@@ -144,6 +151,7 @@ impl Default for Settings {
             open_on: String::new(),
             hover_enlarge: false,
             home_cards: "both".into(),
+            island_tabs: None,
             peek_stay: "moment".into(),
             absence_interval: 180.0,
             active_integrations: vec![
@@ -156,6 +164,7 @@ impl Default for Settings {
             screen: "primary".into(),
             island_drag: true,
             island_spot: None,
+            sidebar_width: 200.0,
             autostart: false,
             hooks_installed: false,
             peek_finished: false,
@@ -439,6 +448,7 @@ mod tests {
   "openOn": "calendar.calendar",
   "hoverEnlarge": true,
   "homeCards": "now",
+  "islandTabs": ["media.music", "calendar.calendar"],
   "peekStay": "always",
   "absenceInterval": 60.0,
   "activeIntegrations": ["integration_notion"],
@@ -446,6 +456,7 @@ mod tests {
   "screen": "cursor",
   "islandDrag": false,
   "islandSpot": { "display": "at:0,0|ONE|1920x1080", "x": 700.0, "y": 500.0, "docked": false },
+  "sidebarWidth": 250.0,
   "autostart": true,
   "hooksInstalled": true,
   "peekFinished": true,
@@ -808,6 +819,7 @@ mod tests {
                 "openOn",
                 "hoverEnlarge",
                 "homeCards",
+                "islandTabs",
                 "peekStay",
                 "absenceInterval",
                 "activeIntegrations",
@@ -815,6 +827,7 @@ mod tests {
                 "screen",
                 "islandDrag",
                 "islandSpot",
+                "sidebarWidth",
                 "autostart",
                 "hooksInstalled",
                 "peekFinished",

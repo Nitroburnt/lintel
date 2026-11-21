@@ -16,23 +16,36 @@
 pub mod display;
 pub mod power;
 pub mod radio;
+pub mod trayicon;
 pub mod wall;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering::Relaxed};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use display::{Display, Method};
-use notch_core::{Ctx, Feature, Group, Manifest, Monitor, ShortcutDef, WindowSpec};
+use notch_core::{Anchor, Ctx, Feature, Group, Manifest, Monitor, ShortcutDef, WindowSpec};
 use radio::Kind;
 use serde_json::{json, Value};
+use svc_input::{Key, Mouse, MouseKind, Verdict};
 use svc_sysevents::Session as Sleep;
-use tauri::{PhysicalPosition, PhysicalSize};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+use tauri::{Manager, PhysicalPosition, PhysicalSize};
 
 const ID: &str = "displays-keepawake";
+
+/// One wheel notch over the tray icon moves the brightness this many points.
+const WHEEL_STEP: u8 = 2;
+/// A burst of notches waits this long for the wheel to stop, then writes once: the monitor's
+/// DDC bus is slow, and a write per event is what made the level jump while the wheel turned.
+const WHEEL_SETTLE: u64 = 90;
+
+/// The brightness and contrast panel: a window and its own icon in the notification area.
+const PANEL: &str = "brightness-panel";
+const TRAY: &str = "brightness";
 
 /// Where the slider turns from the backlight into the overlay (extra dimming).
 const SPLIT: f32 = 0.15;
@@ -51,13 +64,14 @@ static MANIFEST: Manifest = Manifest {
         ShortcutDef { id: "toggle", label: "Start or stop keep awake", default: None },
         ShortcutDef { id: "brighter", label: "Brighter (display under the pointer)", default: Some("Ctrl+Alt+PageUp") },
         ShortcutDef { id: "dimmer", label: "Dimmer (display under the pointer)", default: Some("Ctrl+Alt+PageDown") },
+        ShortcutDef { id: "panel", label: "Brightness and contrast", default: None },
     ],
-    tray: &[],
+    tray: &[("panel", "Brightness and contrast…")],
     // minutes: the last duration picked (0 = until stopped); batteryLimit: a session ends on battery at or below it (0 = never)
     defaults: r#"{ "minutes": 60, "allowDisplaySleep": false, "batteryLimit": 10, "jiggle": false, "jiggleMinutes": 5,
         "autoExternal": false, "autoPower": false, "autoAll": false, "autoAgents": false, "agentsMinutes": 5,
         "linkKeys": false,
-        "extraDimming": true, "linkDisplays": false,
+        "extraDimming": true, "linkDisplays": false, "panelDisplay": "",
         "bluetoothSleep": false, "wifiSleep": false, "wallpaperFolder": "" }"#,
 };
 
@@ -68,6 +82,42 @@ fn now_ms() -> u64 {
 fn flag(s: &Value, key: &str) -> bool {
     s[key].as_bool().unwrap_or(false)
 }
+
+/// The slider levels the user set, kept across restarts: a display that cannot be read
+/// (a monitor whose luminance reply is always 0) has no other way to say where it stands.
+fn levels_path(cx: &Ctx) -> PathBuf {
+    cx.data_dir(ID).join("levels.json")
+}
+
+/// The brightness and contrast the panel last set, kept across restarts: a display
+/// whose reply is unreadable has no other way to say where it stands.
+fn panel_path(cx: &Ctx) -> PathBuf {
+    cx.data_dir(ID).join("panel.json")
+}
+
+/// What `panel.json` holds: the level set per display, and the monitor name behind each id, so that
+/// the same screen is found again after a reboot renumbers it.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct PanelFile {
+    levels: HashMap<String, (u8, u8)>,
+    #[serde(default)]
+    names: HashMap<String, String>,
+}
+
+fn load_panel(cx: &Ctx) -> PanelFile {
+    let Ok(text) = std::fs::read_to_string(panel_path(cx)) else { return PanelFile::default() };
+    if let Ok(file) = serde_json::from_str::<PanelFile>(&text) {
+        return file;
+    }
+    // The first format was the bare map of display id to levels.
+    let levels = serde_json::from_str::<HashMap<String, (u8, u8)>>(&text).unwrap_or_default();
+    PanelFile { levels, names: HashMap::new() }
+}
+
+/// How long after a restore a hardware read is a monitor still coming up, not a change.
+const RESTORE_GRACE: u64 = 8000;
+/// A read sooner than this after one of our writes is that write echoing back.
+const WRITE_SETTLE: u64 = 1500;
 
 /// Runs `f` on a thread of its own and waits at most `limit` for it.
 fn within<T: Send + 'static>(limit: Duration, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
@@ -148,6 +198,19 @@ fn plan(method: Method, internal: bool, extra: bool, s: f32) -> (Option<u8>, f32
     }
 }
 
+/// The tray icon's rectangle in physical pixels, whichever units the shell reported it in.
+fn tray_box(rect: tauri::Rect) -> (i32, i32, i32, i32) {
+    let (x, y) = match rect.position {
+        tauri::Position::Physical(p) => (p.x, p.y),
+        tauri::Position::Logical(p) => (p.x.round() as i32, p.y.round() as i32),
+    };
+    let (w, h) = match rect.size {
+        tauri::Size::Physical(s) => (s.width as i32, s.height as i32),
+        tauri::Size::Logical(s) => (s.width.round() as i32, s.height.round() as i32),
+    };
+    (x, y, w, h)
+}
+
 /// The slider value a backlight reading stands for (no overlay).
 fn level_of(extra: bool, internal: bool, hw: u8) -> f32 {
     let hw = f32::from(hw) / 100.0;
@@ -205,6 +268,40 @@ struct Inner {
     /// An agent works now (told by the page), and when one last did (ms); the quiet minutes count from it.
     agents_busy: AtomicBool,
     agents_last: AtomicU64,
+    /// The debounced write of `levels` to its file.
+    level_turn: Arc<AtomicU64>,
+    /// The panel's own icon in the notification area, the wheel over it, and the
+    /// screen rectangle the icon last reported. All three live only while the
+    /// feature runs.
+    tray: Mutex<Option<TrayIcon>>,
+    wheel: Mutex<Option<svc_input::Sub>>,
+    tray_rect: Mutex<Option<(i32, i32, i32, i32)>>,
+    /// Where the panel last stood on screen, in physical pixels, and the hook that hears a
+    /// click outside it: a panel opened from the tray often never gets the focus to lose.
+    panel_rect: Mutex<Option<(i32, i32, i32, i32)>>,
+    panel_click: Mutex<Option<svc_input::Sub>>,
+    /// The hook that puts the panel away on Escape, from the keyboard as the click does from the mouse.
+    panel_escape: Mutex<Option<svc_input::Sub>>,
+    /// Notches the wheel turned that are not written yet (+ up), the debounced write of them,
+    /// and the lock that keeps two of those writes off the monitor at the same time.
+    wheel_steps: AtomicI32,
+    wheel_turn: Arc<AtomicU64>,
+    wheel_lock: Mutex<()>,
+    /// What the panel last set, per display: (brightness, contrast), both 0–100.
+    panel: Mutex<HashMap<String, (u8, u8)>>,
+    panel_turn: Arc<AtomicU64>,
+    /// The monitor name behind each display id, to find the same screen after a reboot.
+    names: Mutex<HashMap<String, String>>,
+    /// What was last written or restored per display, and when: a read that disagrees is somebody
+    /// else's change (the monitor's own buttons), not our own echo.
+    last_write: Mutex<HashMap<String, (u8, u8, u64)>>,
+    /// Until this moment a hardware read is a monitor still coming up after a restore.
+    restoring: AtomicU64,
+    /// When the panel was last shown, and when it last lost the focus. The panel goes away when
+    /// the user clicks anywhere else, and that same click may be on its own tray icon: the two
+    /// moments tell a close from a second open.
+    panel_shown: AtomicU64,
+    panel_blur: AtomicU64,
 }
 
 impl Inner {
@@ -379,11 +476,485 @@ impl Inner {
         });
     }
 
+    /// Writes the levels down once the burst of a drag is over.
+    fn save_levels(self: &Arc<Self>, cx: &Ctx) {
+        let (me, cx) = (self.clone(), cx.clone());
+        later(&self.level_turn, 400, move || {
+            let levels = me.levels.lock().unwrap().clone();
+            if let Err(e) = notch_core::storage::json_save_atomic(&levels_path(&cx), &levels) {
+                notch_core::log::line(format!("{ID}: levels: {e}"));
+            }
+        });
+    }
+
+    // ── brightness and contrast panel ─────────────────────────────────────────
+
+    /// Every display with the brightness and contrast the panel shows, and the one it controls.
+    fn panel_state(&self, cx: &Ctx) -> Value {
+        let remembered = self.panel.lock().unwrap().clone();
+        let want = cx.settings(ID)["panelDisplay"].as_str().unwrap_or_default().to_string();
+        let mut list: Vec<Value> = Vec::new();
+        for d in display::list() {
+            let (method, hw) = display::probe(&d);
+            self.methods.lock().unwrap().insert(d.id.clone(), method);
+            let mem = remembered.get(&d.id).copied();
+            // The level the user left is what a wake restores: a monitor that came back at its own
+            // default must not replace it with what it reports.
+            let brightness = mem.map(|m| m.0).or(hw).unwrap_or(100);
+            let contrast = if d.internal {
+                mem.map_or(50, |m| m.1)
+            } else {
+                mem.map(|m| m.1).or_else(|| display::read_contrast(&d)).unwrap_or(50)
+            };
+            list.push(json!({
+                "id": d.id, "name": d.name, "internal": d.internal, "primary": d.primary,
+                "brightness": brightness, "contrast": contrast,
+                "hasBrightness": method != Method::None,
+                "hasContrast": !d.internal && method != Method::None,
+                "method": method.name(),
+            }));
+        }
+        let id_of = |row: &Value| row["id"].as_str().unwrap_or_default().to_string();
+        // The chosen display if it is still here, else the primary one, else the first.
+        let selected = if list.iter().any(|r| id_of(r) == want) {
+            want
+        } else {
+            list.iter().find(|r| r["primary"].as_bool() == Some(true)).or_else(|| list.first()).map(id_of).unwrap_or_default()
+        };
+        json!({ "displays": list, "selected": selected })
+    }
+
+    /// One slider move from the panel, or one wheel notch over its icon.
+    fn panel_set(self: &Arc<Self>, cx: &Ctx, id: &str, kind: &str, value: u8) -> Result<Value, String> {
+        let d = Self::display_of(id).ok_or("That display is not connected any more.")?;
+        let value = value.min(100);
+        let mut pair = self.panel.lock().unwrap().get(id).copied().unwrap_or((100, 50));
+        let ok = match kind {
+            "brightness" => {
+                let method = self.method_of(&d);
+                if method == Method::None {
+                    return Err("This display's brightness cannot be changed.".into());
+                }
+                let ok = display::write(&d, method, value);
+                if ok {
+                    pair.0 = value;
+                }
+                ok
+            }
+            "contrast" => {
+                if d.internal {
+                    return Err("A built-in display has no contrast control.".into());
+                }
+                let ok = display::write_contrast(&d, value);
+                if ok {
+                    pair.1 = value;
+                }
+                ok
+            }
+            _ => return Err("unknown setting".into()),
+        };
+        self.panel.lock().unwrap().insert(id.to_string(), pair);
+        if ok {
+            // Our own write: from now on a read that disagrees is somebody else's change.
+            self.last_write.lock().unwrap().insert(id.to_string(), (pair.0, pair.1, now_ms()));
+        }
+        self.save_panel(cx);
+        cx.emit(ID, "panel", json!({ "id": id, "brightness": pair.0, "contrast": pair.1, "ok": ok }));
+        if kind == "brightness" {
+            cx.emit(ID, "brightness", json!({ "id": id, "name": d.name, "level": f32::from(pair.0) / 100.0, "shortcut": true, "count": display::list().len() }));
+        }
+        Ok(json!({ "ok": ok, "brightness": pair.0, "contrast": pair.1 }))
+    }
+
+    /// Reads the display the panel controls again, from the hardware, without touching the others.
+    /// The page compares what comes back with what it showed, and says whether anything moved. Its
+    /// refresh button asks for this; the panel also asks silently while it is open, so that a change
+    /// made at the monitor's own buttons shows up there by itself.
+    fn panel_refresh(self: &Arc<Self>, cx: &Ctx) -> Value {
+        let want = cx.settings(ID)["panelDisplay"].as_str().unwrap_or_default().to_string();
+        let list = display::list();
+        let Some(d) = list.iter().find(|d| d.id == want).or_else(|| list.iter().find(|d| d.primary)).or_else(|| list.first()) else {
+            return Value::Null;
+        };
+        let (method, hw) = display::probe(d);
+        self.methods.lock().unwrap().insert(d.id.clone(), method);
+        let contrast = if d.internal { None } else { display::read_contrast(d) };
+        let (brightness, contrast) = self.adopt(cx, d, hw, contrast);
+        json!({
+            "id": d.id, "brightness": brightness, "contrast": contrast,
+            "hasBrightness": method != Method::None,
+            "hasContrast": !d.internal && method != Method::None,
+        })
+    }
+
+    /// What a read from the hardware means for the saved level. A write of ours still travelling to
+    /// the panel, or a monitor still coming up after a restore, says nothing new; anything else is a
+    /// change somebody made at the monitor itself, and becomes the level a wake puts back.
+    fn adopt(self: &Arc<Self>, cx: &Ctx, d: &Display, hw: Option<u8>, contrast: Option<u8>) -> (u8, u8) {
+        let saved = self.panel.lock().unwrap().get(&d.id).copied();
+        let last = self.last_write.lock().unwrap().get(&d.id).copied();
+        let (mut b, mut c) = saved.unwrap_or((hw.unwrap_or(100), contrast.unwrap_or(50)));
+        let settling = now_ms() < self.restoring.load(Relaxed)
+            || last.is_some_and(|(_, _, at)| now_ms().saturating_sub(at) < WRITE_SETTLE);
+        if !settling {
+            if let Some(v) = hw {
+                if v.abs_diff(b) > 1 {
+                    b = v;
+                }
+            }
+            if let Some(v) = contrast {
+                if v.abs_diff(c) > 1 {
+                    c = v;
+                }
+            }
+        }
+        if saved != Some((b, c)) {
+            self.panel.lock().unwrap().insert(d.id.clone(), (b, c));
+            self.last_write.lock().unwrap().insert(d.id.clone(), (b, c, now_ms()));
+            self.save_panel(cx);
+        }
+        (b, c)
+    }
+
+    fn save_panel(self: &Arc<Self>, cx: &Ctx) {
+        let (me, cx) = (self.clone(), cx.clone());
+        later(&self.panel_turn, 350, move || {
+            let levels = me.panel.lock().unwrap().clone();
+            let mut names = me.names.lock().unwrap().clone();
+            // The name goes with the id: a reboot may give the same screen another number.
+            for d in display::list() {
+                names.insert(d.id.clone(), d.name.clone());
+            }
+            *me.names.lock().unwrap() = names.clone();
+            let file = PanelFile { levels, names };
+            if let Err(e) = notch_core::storage::json_save_atomic(&panel_path(&cx), &file) {
+                notch_core::log::line(format!("{ID}: panel levels: {e}"));
+            }
+        });
+    }
+
+    /// Just before the screen goes away: what the monitor's own buttons changed is what the wake
+    /// should bring back, so it is read now and kept as the saved level.
+    fn remember(self: &Arc<Self>, cx: &Ctx) {
+        for d in display::list() {
+            let (method, hw) = display::probe(&d);
+            self.methods.lock().unwrap().insert(d.id.clone(), method);
+            let contrast = if d.internal { None } else { display::read_contrast(&d) };
+            self.adopt(cx, &d, hw, contrast);
+        }
+    }
+
+    fn restore(self: &Arc<Self>, cx: &Ctx) {
+        let (me, cx) = (self.clone(), cx.clone());
+        std::thread::spawn(move || me.restore_now(&cx));
+    }
+
+    /// Puts the saved level back on the displays that have one: a monitor that came back at its own
+    /// default — a wake, a power cycle, a reboot — is where the user left it before anything is read.
+    fn restore_now(self: &Arc<Self>, cx: &Ctx) {
+        let saved = self.panel.lock().unwrap().clone();
+        if saved.is_empty() {
+            return;
+        }
+        let names = self.names.lock().unwrap().clone();
+        // A read is a monitor still coming up, or the echo of these writes, until the grace ends.
+        self.restoring.store(now_ms() + RESTORE_GRACE, Relaxed);
+        let mut wrote = false;
+        for d in display::list() {
+            let Some((b, c)) = Self::saved_for(&saved, &names, &d) else { continue };
+            let method = self.method_of(&d);
+            if method == Method::None || !display::write(&d, method, b) {
+                continue;
+            }
+            if !d.internal {
+                let _ = display::write_contrast(&d, c);
+            }
+            self.panel.lock().unwrap().insert(d.id.clone(), (b, c));
+            self.last_write.lock().unwrap().insert(d.id.clone(), (b, c, now_ms()));
+            wrote = true;
+        }
+        if wrote {
+            self.save_panel(cx);
+        }
+        // Monitors take a write and then drift back to their own default: read once it has landed.
+        std::thread::sleep(Duration::from_millis(3000));
+        for d in display::list() {
+            let Some((b, c)) = Self::saved_for(&saved, &names, &d) else { continue };
+            let (method, hw) = display::probe(&d);
+            let Some(seen) = hw else { continue };
+            if method == Method::None || seen.abs_diff(b) <= 2 {
+                continue;
+            }
+            if display::write(&d, method, b) {
+                if !d.internal {
+                    let _ = display::write_contrast(&d, c);
+                }
+                self.last_write.lock().unwrap().insert(d.id.clone(), (b, c, now_ms()));
+            }
+        }
+    }
+
+    /// The saved level of `d`: by its id, or by the monitor's name when a reboot renumbered it.
+    fn saved_for(saved: &HashMap<String, (u8, u8)>, names: &HashMap<String, String>, d: &Display) -> Option<(u8, u8)> {
+        saved
+            .get(&d.id)
+            .copied()
+            .or_else(|| saved.iter().find(|(id, _)| names.get(*id).is_some_and(|n| n == &d.name)).map(|(_, p)| *p))
+    }
+
+    /// A wheel turn over the tray icon: `steps` notches up (negative: down), two points each, on
+    /// the display the panel controls. Only that display is touched.
+    fn nudge(self: &Arc<Self>, cx: &Ctx, steps: i32) {
+        // One write at a time: two DDC writes in flight at once is what made the level jump.
+        let _one = self.wheel_lock.lock().unwrap();
+        let list = display::list();
+        let want = cx.settings(ID)["panelDisplay"].as_str().unwrap_or_default().to_string();
+        let d = list
+            .iter()
+            .find(|d| d.id == want)
+            .or_else(|| list.iter().find(|d| d.primary))
+            .or_else(|| list.first());
+        let Some(d) = d else { return };
+        // A notch starts from the level last set: the hardware may still report the one before it,
+        // and a read per notch is the slow part of a wheel turn. Only with nothing remembered is
+        // the display read.
+        let remembered = self.panel.lock().unwrap().get(&d.id).copied().map(|p| p.0);
+        let mut method = self.method_of(d);
+        let hw = if method == Method::None || remembered.is_none() {
+            let (m, hw) = display::probe(d);
+            method = m;
+            self.methods.lock().unwrap().insert(d.id.clone(), m);
+            hw
+        } else {
+            None
+        };
+        if method == Method::None {
+            return;
+        }
+        let now = remembered.or(hw).unwrap_or(100);
+        let to = (i32::from(now) + steps * i32::from(WHEEL_STEP)).clamp(0, 100) as u8;
+        if to != now {
+            let _ = self.panel_set(cx, &d.id, "brightness", to);
+        }
+    }
+
+    /// Centred over the panel's own icon, just above it; with no icon reading yet, the bottom-right
+    /// corner of the work area, which the window factory keeps on the screen either way.
+    fn panel_anchor(&self) -> Option<Anchor> {
+        if let Some((x, y, w, _)) = *self.tray_rect.lock().unwrap() {
+            // The window's width is only known once it is built, so the middle of the icon is all
+            // this can say (winfactory.rs).
+            return Some(Anchor::Centred(x + w / 2, y - 8));
+        }
+        let list = display::list();
+        let d = list.iter().find(|d| d.primary).or_else(|| list.first())?;
+        Some(Anchor::Centred(d.work.2, d.work.3 - 8))
+    }
+
+    fn open_panel(self: &Arc<Self>, cx: &Ctx) -> Result<(), String> {
+        let fresh = cx.app().get_webview_window(PANEL).is_none();
+        let win = cx.window()
+            .open(WindowSpec {
+                label: PANEL.into(),
+                feature: ID.into(),
+                page: "panel".into(),
+                w: 360.0,
+                h: 300.0,
+                frameless: true,
+                topmost: true,
+                monitor: Monitor::Cursor,
+                anchor: self.panel_anchor(),
+                ..Default::default()
+            })?;
+        // A panel at its icon, not a window of its own: no taskbar button (that button was the
+        // Lintel icon the user saw pinned along with the brightness one), and the sun on what
+        // is left of its frame.
+        let _ = win.set_skip_taskbar(true);
+        let _ = win.set_icon(trayicon::sun());
+        self.panel_shown.store(now_ms(), Relaxed);
+        // As the window factory left it, before anything can move it.
+        if let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) {
+            *self.panel_rect.lock().unwrap() = Some((pos.x, pos.y, size.width as i32, size.height as i32));
+        }
+        if fresh {
+            // It goes when it loses the focus: a click anywhere else puts it away. The window is
+            // destroyed off this thread, which runs inside the window's own message callback.
+            let me = self.clone();
+            let cx = cx.clone();
+            win.on_window_event(move |event| {
+                if !matches!(event, tauri::WindowEvent::Focused(false)) {
+                    return;
+                }
+                // A blur that lands while the window is still being put up is not a click away.
+                if now_ms().saturating_sub(me.panel_shown.load(Relaxed)) < 400 {
+                    return;
+                }
+                me.panel_blur.store(now_ms(), Relaxed);
+                let cx = cx.clone();
+                std::thread::spawn(move || cx.window().close(PANEL));
+            });
+        }
+        Ok(())
+    }
+
+    fn toggle_panel(self: &Arc<Self>, cx: &Ctx) {
+        match cx.app().get_webview_window(PANEL) {
+            Some(win) if win.is_visible().unwrap_or(false) => {
+                cx.window().close(PANEL);
+                return;
+            }
+            Some(_) => {}
+            None => {
+                // The panel was just closed by the click that took the focus away — possibly this
+                // very click, on its icon: it stays closed rather than opening again.
+                if now_ms().saturating_sub(self.panel_blur.load(Relaxed)) < 350 {
+                    return;
+                }
+            }
+        }
+        if let Err(e) = self.open_panel(cx) {
+            notch_core::log::line(format!("{ID}: brightness panel: {e}"));
+        }
+    }
+
+    /// The panel's own icon in the notification area. A click opens the panel;
+    /// `wheel_on` turns the wheel over it into brightness steps.
+    fn tray_on(self: &Arc<Self>, cx: &Ctx) {
+        if self.tray.lock().unwrap().is_some() {
+            return;
+        }
+        let me = self.clone();
+        let cx2 = cx.clone();
+        let mut builder = TrayIconBuilder::with_id(TRAY)
+            .tooltip("Brightness and contrast")
+            .show_menu_on_left_click(false)
+            .on_tray_icon_event(move |_tray, event| match event {
+                TrayIconEvent::Enter { rect, .. } | TrayIconEvent::Move { rect, .. } | TrayIconEvent::Leave { rect, .. } => {
+                    *me.tray_rect.lock().unwrap() = Some(tray_box(rect));
+                }
+                TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, rect, .. } => {
+                    // The panel opens above the icon where it is now, not where a hover last saw it.
+                    *me.tray_rect.lock().unwrap() = Some(tray_box(rect));
+                    let (me, cx) = (me.clone(), cx2.clone());
+                    // A window must never be built on the main thread inside an event callback (winfactory.rs).
+                    std::thread::spawn(move || me.toggle_panel(&cx));
+                }
+                _ => {}
+            });
+        builder = builder.icon(trayicon::sun());
+        match builder.build(cx.app()) {
+            Ok(tray) => {
+                if let Ok(Some(rect)) = tray.rect() {
+                    *self.tray_rect.lock().unwrap() = Some(tray_box(rect));
+                }
+                *self.tray.lock().unwrap() = Some(tray);
+                // Next to the clock, and the only icon of this program pinned there: the island's
+                // own icon is put back off the taskbar, whichever of them was pinned before.
+                std::thread::spawn(|| {
+                    std::thread::sleep(Duration::from_millis(1000));
+                    trayicon::enforce_pin();
+                });
+            }
+            Err(e) => notch_core::log::line(format!("{ID}: tray icon: {e}")),
+        }
+    }
+
+    /// The wheel over the tray icon. The hook only compares the pointer with the
+    /// rectangle the icon last reported and counts the notches; the write goes out once
+    /// the wheel has stopped.
+    fn wheel_on(self: &Arc<Self>, cx: &Ctx) {
+        if self.wheel.lock().unwrap().is_some() {
+            return;
+        }
+        let me = self.clone();
+        let cx = cx.clone();
+        // Windows counts a notch as 120. A free-spinning wheel and a touchpad send many smaller
+        // steps: they are added up here, so one notch is one step however it arrives, and the rest
+        // of a notch is dropped once the pointer leaves the icon.
+        let rest = AtomicI32::new(0);
+        let sub = svc_input::mouse(45, false, move |m: &Mouse| {
+            if m.kind == MouseKind::Wheel && m.delta != 0 {
+                let inside = me
+                    .tray_rect
+                    .lock()
+                    .unwrap()
+                    .is_some_and(|(x, y, w, h)| m.x >= x && m.x < x + w && m.y >= y && m.y < y + h);
+                if !inside {
+                    rest.store(0, Relaxed);
+                } else {
+                    let total = rest.fetch_add(m.delta, Relaxed) + m.delta;
+                    let notches = total / 120;
+                    rest.store(total - notches * 120, Relaxed);
+                    if notches != 0 {
+                        me.wheel_steps.fetch_add(notches.clamp(-20, 20), Relaxed);
+                        let turn = me.wheel_turn.clone();
+                        let (me, cx) = (me.clone(), cx.clone());
+                        later(&turn, WHEEL_SETTLE, move || me.wheel_write(&cx));
+                    }
+                }
+            }
+            Verdict::Pass
+        });
+        *self.wheel.lock().unwrap() = Some(sub);
+    }
+
+    /// A click anywhere but on the panel puts it away. A panel opened from a tray click often
+    /// never gets the focus, so it has none to lose and no blur to hear: this hook hears the
+    /// press whatever window is in front. The window is destroyed beside the hook thread, and
+    /// `panel_blur` tells `toggle_panel` that this very click on its icon must not open it again.
+    fn panel_click_on(self: &Arc<Self>, cx: &Ctx) {
+        if self.panel_click.lock().unwrap().is_some() {
+            return;
+        }
+        let me = self.clone();
+        let cx = cx.clone();
+        let sub = svc_input::mouse(46, false, move |m: &Mouse| {
+            if matches!(m.kind, MouseKind::Down(_)) {
+                if let Some((x, y, w, h)) = *me.panel_rect.lock().unwrap() {
+                    let inside = m.x >= x && m.x < x + w && m.y >= y && m.y < y + h;
+                    if !inside && cx.app().get_webview_window(PANEL).is_some() {
+                        me.panel_blur.store(now_ms(), Relaxed);
+                        let cx = cx.clone();
+                        std::thread::spawn(move || cx.window().close(PANEL));
+                    }
+                }
+            }
+            Verdict::Pass
+        });
+        *self.panel_click.lock().unwrap() = Some(sub);
+    }
+
+    /// Escape puts the panel away from the keyboard, as a click elsewhere does from the mouse.
+    /// The key is only heard, not taken (`Verdict::Pass`): the window in front still gets it.
+    fn panel_escape_on(self: &Arc<Self>, cx: &Ctx) {
+        if self.panel_escape.lock().unwrap().is_some() {
+            return;
+        }
+        let cx = cx.clone();
+        let sub = svc_input::keyboard(46, false, move |k: &Key| {
+            if k.down && k.vk == 0x1B && cx.app().get_webview_window(PANEL).is_some() {
+                let cx = cx.clone();
+                std::thread::spawn(move || cx.window().close(PANEL));
+            }
+            Verdict::Pass
+        });
+        *self.panel_escape.lock().unwrap() = Some(sub);
+    }
+
+    /// The notches one burst of the wheel left, written in a single go.
+    fn wheel_write(self: &Arc<Self>, cx: &Ctx) {
+        let steps = self.wheel_steps.swap(0, Relaxed);
+        if steps != 0 {
+            self.nudge(cx, steps);
+        }
+    }
+
     /// A hardware write finished. A failure puts the slider back to the last level that took.
     fn written(self: &Arc<Self>, cx: &Ctx, id: &str, job: &Job, ok: bool) {
         if ok {
             self.fails.lock().unwrap().remove(id);
             self.levels.lock().unwrap().insert(id.into(), job.level);
+            self.save_levels(cx);
             return;
         }
         let strikes = {
@@ -458,6 +1029,7 @@ impl Inner {
                 exclude_from_capture: true,
                 transparent: true,
                 monitor: Monitor::Primary,
+                anchor: None,
             };
             match cx.window().open(spec) {
                 Ok(win) => {
@@ -514,6 +1086,8 @@ impl Inner {
         self.sync_subs(cx);
         cx.emit(ID, "displays", json!({}));
         self.automate(cx);
+        // A monitor that was switched off and on, or plugged back in, gets the saved level again.
+        self.restore(cx);
     }
 
     /// The display under the pointer, one step brighter or dimmer.
@@ -627,13 +1201,11 @@ impl Inner {
     /// Subscribes to exactly what the settings and the open overlays need.
     fn sync_subs(self: &Arc<Self>, cx: &Ctx) {
         let s = cx.settings(ID);
-        let want_display = flag(&s, "autoExternal") || !self.opened.lock().unwrap().is_empty();
         let want_power = flag(&s, "autoPower");
-        let want_sleep = flag(&s, "bluetoothSleep") || flag(&s, "wifiSleep");
         let mut subs = self.subs.lock().unwrap();
-        if !want_display {
-            subs.display = None;
-        } else if subs.display.is_none() {
+        // Displays and the session are watched the whole time the feature runs: a monitor that comes
+        // back, a wake or a reboot is given the saved brightness. Neither is a timer.
+        if subs.display.is_none() {
             let (me, cx) = (self.clone(), cx.clone());
             subs.display = Some(svc_sysevents::on_display_change(move || {
                 // A burst of changes is read once, after it.
@@ -650,19 +1222,29 @@ impl Inner {
                 later(&me.power_turn, 1000, move || me2.automate(&cx2));
             }));
         }
-        if !want_sleep {
-            subs.sleep = None;
-        } else if subs.sleep.is_none() {
-            let cx = cx.clone();
+        if subs.sleep.is_none() {
+            let (me, cx) = (self.clone(), cx.clone());
             subs.sleep = Some(svc_sysevents::on_session(move |ev| match ev {
                 // Held here for up to 2.5 s, so that the radios are off before Windows suspends.
                 Sleep::Sleep => {
                     let cx = cx.clone();
                     let _ = within(Duration::from_millis(2500), move || Self::radios_off(&cx));
                 }
+                // The screen goes away: what the monitor's buttons changed is what the wake brings back.
+                Sleep::DisplayOff => {
+                    let (me, cx) = (me.clone(), cx.clone());
+                    std::thread::spawn(move || me.remember(&cx));
+                }
+                // The monitor comes back at its own default: the saved level goes on again.
+                Sleep::DisplayOn => {
+                    let (me, cx) = (me.clone(), cx.clone());
+                    me.restore(&cx);
+                }
                 Sleep::Resume => {
-                    let cx = cx.clone();
-                    std::thread::spawn(move || Self::radios_back(&cx));
+                    let (me, cx) = (me.clone(), cx.clone());
+                    let radios = cx.clone();
+                    std::thread::spawn(move || Self::radios_back(&radios));
+                    me.restore(&cx);
                 }
                 _ => {}
             }));
@@ -759,12 +1341,26 @@ impl Feature for DisplaysKeepawake {
         }
         let inner = self.inner.clone();
         inner.queue.quit.store(false, Relaxed);
+        *inner.levels.lock().unwrap() = notch_core::storage::json_load(&levels_path(cx));
+        let panel = load_panel(cx);
+        *inner.panel.lock().unwrap() = panel.levels;
+        *inner.names.lock().unwrap() = panel.names;
+        inner.tray_on(cx);
+        inner.wheel_on(cx);
+        inner.panel_click_on(cx);
+        inner.panel_escape_on(cx);
         inner.sync_subs(cx);
-        let cx = cx.clone();
+        let (boot, cx) = (cx.clone(), cx.clone());
+        let rest = inner.clone();
         // A radio switched off before a shutdown while asleep comes back first of all.
         std::thread::spawn(move || {
             DisplaysKeepawake::radios_debt(&cx);
             inner.automate(&cx);
+        });
+        // The monitors are not ready the instant the app starts: the saved level goes back after a moment.
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(1500));
+            rest.restore_now(&boot);
         });
         Ok(())
     }
@@ -776,6 +1372,17 @@ impl Feature for DisplaysKeepawake {
         let inner = &self.inner;
         inner.end(cx, "off");
         inner.close_overlays(cx);
+        // The panel's icon, its wheel, its click-away and its Escape hook go with the feature; dropping them removes them.
+        let tray = inner.tray.lock().unwrap().take();
+        let wheel = inner.wheel.lock().unwrap().take();
+        let click = inner.panel_click.lock().unwrap().take();
+        let escape = inner.panel_escape.lock().unwrap().take();
+        *inner.tray_rect.lock().unwrap() = None;
+        *inner.panel_rect.lock().unwrap() = None;
+        drop(tray);
+        drop(wheel);
+        drop(click);
+        drop(escape);
         *inner.subs.lock().unwrap() = Subs::default();
         inner.queue.quit.store(true, Relaxed);
         inner.queue.jobs.lock().unwrap().clear();
@@ -864,6 +1471,7 @@ impl Feature for DisplaysKeepawake {
                 match args["id"].as_str() {
                     Some("toggle") => return self.call(cx, "toggle", Value::Null),
                     Some(id @ ("brighter" | "dimmer")) => inner.hold_step(cx, id == "brighter"),
+                    Some("panel") => inner.toggle_panel(cx),
                     _ => {}
                 }
                 Ok(Value::Null)
@@ -919,6 +1527,39 @@ impl Feature for DisplaysKeepawake {
                 let label = args["label"].as_str().unwrap_or_default();
                 let id = inner.opened.lock().unwrap().iter().find(|(_, l)| l.as_str() == label).map(|(k, _)| k.clone());
                 Ok(json!(id.and_then(|id| inner.alphas.lock().unwrap().get(&id).copied()).unwrap_or(0.0)))
+            }
+            // ── brightness and contrast panel
+            "panel" => Ok(inner.panel_state(cx)),
+            "panelRefresh" | "panelPoll" => Ok(inner.panel_refresh(cx)),
+            "panelSet" => {
+                let id = args["id"].as_str().ok_or("no display")?;
+                let kind = args["kind"].as_str().unwrap_or("brightness");
+                let value = args["value"].as_u64().unwrap_or(0).min(100) as u8;
+                inner.panel_set(cx, id, kind, value)
+            }
+            "panelSelect" => {
+                let id = args["id"].as_str().unwrap_or_default().to_string();
+                cx.patch_settings(ID, json!({ "panelDisplay": id }));
+                Ok(inner.panel_state(cx))
+            }
+            "open" => {
+                inner.open_panel(cx)?;
+                Ok(Value::Null)
+            }
+            "close" => {
+                cx.window().close(PANEL);
+                Ok(Value::Null)
+            }
+            "nudge" => {
+                let steps = args["steps"].as_i64().unwrap_or(1).clamp(1, 20) as i32;
+                inner.nudge(cx, if args["up"].as_bool().unwrap_or(true) { steps } else { -steps });
+                Ok(Value::Null)
+            }
+            "tray" => {
+                if args["id"].as_str() == Some("panel") {
+                    inner.toggle_panel(cx);
+                }
+                Ok(Value::Null)
             }
             // ── wallpaper
             "wallpapers" => {

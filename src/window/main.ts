@@ -7,7 +7,7 @@
 
 import "./window.css";
 import { Bridge, onEvent } from "../core/bridge";
-import { featureById, featureCtx } from "../core/registry";
+import { featureCtx, loadFeature } from "../core/registry";
 import type { Settings } from "../core/state";
 import { resolveLanguage, setLanguage, systemLanguages } from "../i18n/i18n";
 import { installTooltip } from "../ui/tooltip";
@@ -31,7 +31,8 @@ async function main() {
   follow(boot?.settings.language);
   void onEvent<Settings>("settings-changed", (s) => follow(s.language));
 
-  const mount = featureById(id)?.windows?.[page];
+  // Only this feature's chunk, not the other sixty: a window opens quickly.
+  const mount = (await loadFeature(id))?.windows?.[page];
   if (!mount) {
     void Bridge.log(`window ${id}/${page}: no such page`);
     return;

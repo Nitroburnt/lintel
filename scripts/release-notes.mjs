@@ -30,13 +30,16 @@ const file = `lintel-${version}-setup.exe`;
 const path = join(root, "release", file);
 const sha = existsSync(path) ? createHash("sha256").update(readFileSync(path)).digest("hex") : null;
 
-console.log(`Lintel is a notch toolkit for Windows: an island that stays hidden at the top of the screen and comes out when you point at it or when something needs you.
+console.log(`> **Notice:** This is an unofficial fork release of Lintel maintained by **Nitroburnt**. It contains additional features and refinements that will be submitted upstream.
+>
+> - **Fork Repository & Source:** https://github.com/Nitroburnt/lintel/tree/v${version}
+> - **Upstream Project & Guide:** https://lintel.thisissbk.com (Original by Shakib Bin Kabir)
 
-**Website, guide and documentation:** https://lintel.thisissbk.com
+Lintel is a notch toolkit for Windows: an island that stays hidden at the top of the screen and comes out when you point at it or when something needs you.
 
 ## Install
 
-1. Download \`${file}\` below, or run \`winget install ShakibBinKabir.Lintel\` once this version has reached winget.
+1. Download \`${file}\` below.
 2. Run it. It installs for your account only and does not ask for administrator rights.
 3. The installer is not code-signed, so Windows SmartScreen shows a warning. Choose "More info", then "Run anyway", if you trust this download.
 
@@ -46,6 +49,10 @@ ${sha ? `\n**SHA-256 of \`${file}\`:** \`${sha}\`\n` : ""}
 
 ${entry}
 
-## Code signing policy
+## License and Attribution
 
-The [code signing policy](https://lintel.thisissbk.com/download.html#signing) says how releases are built and why they are not signed. Lintel is licensed under GPL-3.0-or-later; the projects it grew from are credited in [NOTICE.md](https://github.com/shakibbinkabir/lintel/blob/main/NOTICE.md).`);
+This release is licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
+- Fork source tag: [v${version}](https://github.com/Nitroburnt/lintel/tree/v${version})
+- Fork [LICENSE](https://github.com/Nitroburnt/lintel/blob/v${version}/LICENSE)
+- Upstream attribution & credits: [NOTICE.md](https://github.com/Nitroburnt/lintel/blob/v${version}/NOTICE.md)
+- Upstream code signing policy: https://lintel.thisissbk.com/download.html#signing`);

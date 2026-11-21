@@ -347,6 +347,7 @@ impl Capture {
                 // Nothing of it shows until the page has drawn the frozen picture.
                 transparent: true,
                 monitor: Where::Primary,
+                anchor: None,
             };
             match cx.window().open(spec) {
                 Ok(window) => {
@@ -474,6 +475,7 @@ impl Capture {
             exclude_from_capture: true,
             transparent: true,
             monitor: Where::Primary,
+            anchor: None,
         })?;
         let _ = window.set_resizable(false);
         let _ = window.set_size(PhysicalSize::new(w as u32, h as u32));

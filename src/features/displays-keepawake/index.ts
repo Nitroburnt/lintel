@@ -12,9 +12,13 @@ import { btn, card, field, row, setMeter, slider, stripRow, toggle } from "../..
 
 interface SessionState { active: boolean; startedAt?: number; endsAt?: number | null; auto?: boolean }
 interface DisplayRow { id: string; name: string; internal: boolean; primary: boolean; method: "wmi" | "ddc" | "ddc-write" | "none"; level: number }
+interface PanelRow { id: string; name: string; internal: boolean; primary: boolean; brightness: number; contrast: number; hasBrightness: boolean; hasContrast: boolean }
+interface PanelState { displays: PanelRow[]; selected: string }
 interface Pic { path: string; name: string }
 
 const P = "f-displays-keepawake-";
+/** A circle with half of it filled: contrast. Not in the shared set. */
+const CONTRAST = "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 5v14a7 7 0 0 1 0-14z";
 let session: SessionState = { active: false };
 
 // ── readings ─────────────────────────────────────────────────────────────────
@@ -100,6 +104,10 @@ export default defineFeature({
       const set = (a: number) => (root.style.opacity = String(Math.max(0, Math.min(1, a))));
       cx.on<{ label: string; alpha: number }>("dim", (e) => e.label === label && set(e.alpha));
       void cx.call<number>("dimAlpha", { label }).then((a) => set(a ?? 0));
+    },
+    // The brightness and contrast panel, opened by its tray icon (Rust).
+    panel(root, cx) {
+      brightnessPanel(root, cx);
     },
   },
 
@@ -298,6 +306,241 @@ function displaysPage(cx: FeatureCtx) {
     },
     sync() {},
   };
+}
+
+// ── Brightness and contrast ──────────────────────────────────────────────────
+
+/** The panel behind the tray icon. Wheel over a slider steps it 2 % a notch, smoothly. */
+function brightnessPanel(root: HTMLElement, cx: FeatureCtx) {
+  type Kind = "brightness" | "contrast";
+  let state: PanelState = { displays: [], selected: "" };
+  let sel = "";
+  // Our value is the one on screen until the hardware has caught up: a write in flight, one
+  // waiting, or one that landed less than QUIET_MS ago. Nothing from Rust moves the sliders then,
+  // which is what made a wheel turn jitter back and forth.
+  const want: Record<Kind, number | null> = { brightness: null, contrast: null };
+  const busy: Record<Kind, boolean> = { brightness: false, contrast: false };
+  const quiet: Record<Kind, number> = { brightness: 0, contrast: 0 };
+  const QUIET_MS = 700;
+
+  const deviceIco = h("span", { class: `${P}device-ico` }, icon("monitor", 18));
+  const name = h("b", { text: "" });
+  const sub = h("small", { text: "" });
+  const brightBar = slider(1, { label: cx.t("Brightness"), wheel: true, wheelStep: 0.02, onChange: (v) => send("brightness", v) });
+  const brightNum = h("b", { class: `${P}num`, text: "—" });
+  const contrastBar = slider(1, { label: cx.t("Contrast"), wheel: true, wheelStep: 0.02, onChange: (v) => send("contrast", v) });
+  const contrastNum = h("b", { class: `${P}num`, text: "—" });
+  const brightRow = h("div", { class: `${P}row` }, h("span", { class: `${P}ico` }, icon("sun", 16)), brightBar, brightNum);
+  const contrastRow = h("div", { class: `${P}row` }, h("span", { class: `${P}ico` }, icon(CONTRAST, 16)), contrastBar, contrastNum);
+  const devices = h("div", { class: `${P}devices` });
+  const nums: Record<Kind, HTMLElement> = { brightness: brightNum, contrast: contrastNum };
+  // The reading of the refresh button, left of it and out of the layout: it comes and goes
+  // without moving the button, which stays in line with the numbers below.
+  const note = h("small", { class: `${P}note`, text: "" });
+  const refreshBtn = h(
+    "button",
+    { class: `btn ghost icon ${P}refresh`, title: cx.t("Refresh"), "aria-label": cx.t("Refresh"), onclick: () => void refresh() },
+    icon("refresh", 14),
+  );
+
+  const settled = (kind: Kind) => want[kind] == null && !busy[kind] && performance.now() >= quiet[kind];
+
+  /** One write at a time per setting; a burst leaves only its last value waiting, which is sent
+   *  when the write before it is done. */
+  const flush = (kind: Kind) => {
+    if (busy[kind]) return;
+    const value = want[kind];
+    if (value == null) return;
+    want[kind] = null;
+    const id = sel;
+    busy[kind] = true;
+    void cx
+      .call<{ ok?: boolean }>("panelSet", { id, kind, value })
+      .then((r) => {
+        busy[kind] = false;
+        if (want[kind] != null) window.setTimeout(() => flush(kind), 30);
+        // A refused write (a display that cannot read or take it) puts the slider back.
+        else if (!r || r.ok === false) void load();
+      })
+      .catch(() => {
+        busy[kind] = false;
+        void load();
+      });
+  };
+
+  /** The number moves at once; the hardware follows, and its late answer is ignored. */
+  const send = (kind: Kind, fraction: number) => {
+    if (!sel) return;
+    const value = Math.max(0, Math.min(100, Math.round(fraction * 100)));
+    want[kind] = value;
+    quiet[kind] = performance.now() + QUIET_MS;
+    nums[kind].textContent = String(value);
+    flush(kind);
+  };
+
+  const select = async (id: string) => {
+    // A write still waiting belongs to the display that is being left behind.
+    want.brightness = null;
+    want.contrast = null;
+    quiet.brightness = 0;
+    quiet.contrast = 0;
+    sel = id;
+    const s = await cx.call<PanelState>("panelSelect", { id });
+    if (s) {
+      state = s;
+      sel = s.selected;
+    }
+    paint();
+  };
+
+  const load = async () => {
+    // A fresh reading is the truth again, including after a write the display refused.
+    quiet.brightness = 0;
+    quiet.contrast = 0;
+    const s = await cx.call<PanelState>("panel");
+    if (s) {
+      state = s;
+      sel = s.selected;
+    }
+    paint();
+  };
+
+  function paint() {
+    const row = state.displays.find((d) => d.id === sel);
+    devices.replaceChildren(
+      ...state.displays.map((d) =>
+        h("button", { class: `tab${d.id === sel ? " on" : ""}`, title: d.id, onclick: () => void select(d.id) },
+          icon(d.internal ? "sun" : "monitor", 14), h("span", { text: d.name }))));
+    if (!row) {
+      name.textContent = cx.t("No display found.");
+      sub.textContent = "";
+      setMeter(brightBar, 0);
+      setMeter(contrastBar, 0);
+      brightNum.textContent = "—";
+      contrastNum.textContent = "—";
+      return;
+    }
+    name.textContent = row.name;
+    // The monitor id for an external display, the screen's own name for a laptop panel.
+    sub.textContent = row.internal ? cx.t("Built-in display") : row.id;
+    // A setting being written is where the pointer or the wheel left it, not where the hardware was.
+    if (settled("brightness")) {
+      setMeter(brightBar, row.hasBrightness ? row.brightness / 100 : 0);
+      brightNum.textContent = row.hasBrightness ? String(row.brightness) : "—";
+    }
+    if (settled("contrast")) {
+      setMeter(contrastBar, row.hasContrast ? row.contrast / 100 : 0);
+      contrastNum.textContent = row.hasContrast ? String(row.contrast) : "—";
+    }
+    brightBar.setAttribute("aria-disabled", String(!row.hasBrightness));
+    contrastBar.setAttribute("aria-disabled", String(!row.hasContrast));
+    brightRow.classList.toggle(`${P}off`, !row.hasBrightness);
+    contrastRow.classList.toggle(`${P}off`, !row.hasContrast);
+    deviceIco.replaceChildren(icon(row.internal ? "sun" : "monitor", 18));
+  }
+
+  // The tray icon's wheel writes where this window can see it. Our own writes come back here too,
+  // a little late: while one is in flight the sliders stay where the user put them.
+  cx.on<{ id: string; brightness: number; contrast: number }>("panel", (e) => {
+    const d = state.displays.find((x) => x.id === e.id);
+    if (!d) return;
+    d.brightness = e.brightness;
+    d.contrast = e.contrast;
+    if (e.id === sel && settled("brightness") && settled("contrast")) paint();
+  });
+
+  /** A value that just changed gets the accent for a moment. */
+  const flash = (el: HTMLElement, changed: boolean) => {
+    if (!changed) return;
+    el.classList.remove(`${P}changed`);
+    void el.offsetWidth;
+    el.classList.add(`${P}changed`);
+    window.setTimeout(() => el.classList.remove(`${P}changed`), 1600);
+  };
+
+  /** Reads this display again and says whether the hardware moved since it was last shown. */
+  let reading = false;
+  const refresh = async () => {
+    if (reading) return;
+    reading = true;
+    // One turn of the arrow for each click, restarted even when clicked again before it ended.
+    refreshBtn.classList.remove(`${P}spin`);
+    void refreshBtn.offsetWidth;
+    refreshBtn.classList.add(`${P}spin`);
+    note.textContent = "";
+    const was = state.displays.find((d) => d.id === sel);
+    const before = was && { brightness: was.brightness, contrast: was.contrast, hasBrightness: was.hasBrightness, hasContrast: was.hasContrast };
+    let row: PanelRow | null = null;
+    try {
+      row = await cx.call<PanelRow | null>("panelRefresh");
+    } finally {
+      reading = false;
+    }
+    if (!row) {
+      note.textContent = cx.t("No display found.");
+      return;
+    }
+    const d = state.displays.find((x) => x.id === row.id);
+    if (d) Object.assign(d, row);
+    sel = row.id;
+    paint();
+    // What was just read is on screen, whatever a write of ours was doing.
+    setMeter(brightBar, row.hasBrightness ? row.brightness / 100 : 0);
+    setMeter(contrastBar, row.hasContrast ? row.contrast / 100 : 0);
+    brightNum.textContent = row.hasBrightness ? String(row.brightness) : "—";
+    contrastNum.textContent = row.hasContrast ? String(row.contrast) : "—";
+    if (before) {
+      const bright = before.brightness !== row.brightness || before.hasBrightness !== row.hasBrightness;
+      const contrast = before.contrast !== row.contrast || before.hasContrast !== row.hasContrast;
+      flash(brightNum, bright);
+      flash(contrastNum, contrast);
+      note.textContent = cx.t(bright || contrast ? "Updated" : "No change");
+    }
+    window.setTimeout(() => {
+      if (!reading) note.textContent = "";
+    }, 2200);
+  };
+
+  // While the panel is open, a change made at the monitor's own buttons shows up here by itself, and
+  // Rust takes it as the level a wake restores. Silent: the note and the arrow belong to the button.
+  let polling = false;
+  const poll = async () => {
+    if (reading || polling || !sel) return;
+    if (want.brightness != null || want.contrast != null || busy.brightness || busy.contrast) return;
+    const at = performance.now();
+    if (at < quiet.brightness || at < quiet.contrast) return;
+    polling = true;
+    let row: PanelRow | null = null;
+    try {
+      row = await cx.call<PanelRow | null>("panelPoll");
+    } finally {
+      polling = false;
+    }
+    if (!row) return;
+    const d = state.displays.find((x) => x.id === row!.id);
+    if (!d) return;
+    const moved =
+      d.brightness !== row.brightness ||
+      d.contrast !== row.contrast ||
+      d.hasBrightness !== row.hasBrightness ||
+      d.hasContrast !== row.hasContrast;
+    Object.assign(d, row);
+    if (moved) paint();
+  };
+  const timer = window.setInterval(() => void poll(), 2000);
+  window.addEventListener("pagehide", () => clearInterval(timer));
+
+  root.append(
+    h("div", { class: `win ${P}panel-win` },
+      h("div", { class: "win-bar" }, icon("sun", 14), h("span", { text: cx.t("Brightness and contrast") }),
+        h("button", { class: "close", title: cx.t("Close"), onclick: () => void cx.call("close"), text: "×" })),
+      h("div", { class: `${P}panel` },
+        h("div", { class: `${P}device` }, deviceIco, h("div", { class: `${P}device-text` }, name, sub), note, refreshBtn),
+        brightRow,
+        contrastRow,
+        devices)),
+  );
+  void load();
 }
 
 // ── Wallpaper ────────────────────────────────────────────────────────────────

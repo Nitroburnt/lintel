@@ -12,7 +12,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use notch_core::{Monitor, WindowSpec};
+use notch_core::{Anchor, Monitor, WindowSpec};
 use tauri::utils::config::Color;
 use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
@@ -129,6 +129,23 @@ fn monitor(app: &AppHandle, which: Monitor) -> Option<tauri::Monitor> {
     island::target_monitor(app, &pref)
 }
 
+/// The left edge that centres a window `width` wide on `ax`, kept inside the screen that holds
+/// the point with an 8 px margin, so a panel over an icon at the end of the taskbar stays whole.
+fn centred_x(app: &AppHandle, ax: i32, ay: i32, width: i32) -> i32 {
+    let mut x = ax - width / 2;
+    let screen = app.available_monitors().unwrap_or_default().into_iter().find(|m| {
+        let (p, s) = (m.position(), m.size());
+        ax >= p.x && ax < p.x + s.width as i32 && ay >= p.y && ay < p.y + s.height as i32
+    });
+    if let Some(m) = screen {
+        let (p, s) = (m.position(), m.size());
+        let left = p.x + 8;
+        let right = (p.x + s.width as i32 - width - 8).max(left);
+        x = x.clamp(left, right);
+    }
+    x
+}
+
 /// Creates the window, or shows it again when its label already exists.
 pub fn open(app: &AppHandle, spec: WindowSpec) -> Result<WebviewWindow, String> {
     if let Some(win) = app.get_webview_window(&spec.label) {
@@ -170,12 +187,27 @@ pub fn open(app: &AppHandle, spec: WindowSpec) -> Result<WebviewWindow, String> 
     if spec.no_activate {
         platform::make_non_activating(&win);
     }
-    // Centred on its display, in physical pixels: displays may differ in scale.
-    if let (Some(m), Ok(size)) = (monitor(app, spec.monitor), win.outer_size()) {
-        let (origin, area) = (m.position(), m.size());
-        let x = origin.x + (area.width as i32 - size.width as i32) / 2;
-        let y = origin.y + (area.height as i32 - size.height as i32) / 2;
-        let _ = win.set_position(PhysicalPosition::new(x, y));
+    // At its anchor, or centred on its display, in physical pixels: displays may differ in scale.
+    let anchored = match (spec.anchor, win.outer_size()) {
+        (Some(Anchor::Corner(ax, ay)), Ok(size)) => {
+            let _ = win.set_position(PhysicalPosition::new(ax - size.width as i32, ay - size.height as i32));
+            true
+        }
+        // Over its icon: the window's width is only known now, so its corner is worked out here.
+        (Some(Anchor::Centred(ax, ay)), Ok(size)) => {
+            let x = centred_x(app, ax, ay, size.width as i32);
+            let _ = win.set_position(PhysicalPosition::new(x, ay - size.height as i32));
+            true
+        }
+        _ => false,
+    };
+    if !anchored {
+        if let (Some(m), Ok(size)) = (monitor(app, spec.monitor), win.outer_size()) {
+            let (origin, area) = (m.position(), m.size());
+            let x = origin.x + (area.width as i32 - size.width as i32) / 2;
+            let y = origin.y + (area.height as i32 - size.height as i32) / 2;
+            let _ = win.set_position(PhysicalPosition::new(x, y));
+        }
     }
     if spec.no_activate {
         platform::show_inactive(&win);

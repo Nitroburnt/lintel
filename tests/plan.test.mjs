@@ -108,6 +108,8 @@ test("the header chip's tone: none without data, ok below 50, warn below 80, bad
 test("reset times: a countdown for 5 hours, a weekday for the week", () => {
   assert.equal(resetLabel(win(10, NOW / 1000 + 4800), false, NOW), "in 1 h 20");
   assert.equal(resetLabel(win(10, NOW / 1000 + 300), false, NOW), "in 5 min");
+  assert.equal(resetLabel(win(10, NOW / 1000 + 3600), false, NOW), "in 1 h");
+  assert.equal(resetLabel(win(10, NOW / 1000 + 30), false, NOW), "in 1 min");
   assert.equal(resetLabel(win(10, past), false, NOW), "Resetting…");
   const at = new Date(2026, 9, 12, 9, 5); // a Monday, local time
   assert.equal(resetLabel({ usedPct: 1, resetsAt: at.getTime() }, true, at.getTime() - 3600_000), "Mon 9:05");

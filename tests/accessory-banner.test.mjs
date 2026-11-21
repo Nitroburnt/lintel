@@ -84,9 +84,8 @@ test("the output goes to the earbuds: the level that switch brings is no notice,
   stop();
 });
 
-// todo: the arbiter drops a notice that a level keeps off the strip, and one that a level takes
-// down does not come back. Both pass once it keeps them for the 1.6 s the level lasts.
-test("a volume key at that very moment: the banner follows the level", { todo: "src/island/arbiter.ts" }, async (t) => {
+// A level takes the strip for its 1.6 s, and the banner that waited behind it follows.
+test("a volume key at that very moment: the banner follows the level", async (t) => {
   await t.test("the level first", (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const { strip, accessory, volume, stop } = start();

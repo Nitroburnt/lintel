@@ -556,14 +556,25 @@ fn github_repo_of(url: &str) -> Option<&str> {
     repo_ok(rest).then_some(rest)
 }
 
-/// (repo, branch) of the checkout at or above `dir`; None for a detached head,
-/// another host or a worktree (debt: `.git` as a file is not followed).
+/// The directory that holds `HEAD` and `config`: the path itself, or what a
+/// `.git` file names (`gitdir: <path>`, relative to it — a worktree or a submodule).
+fn git_dir(dot_git: &std::path::Path) -> Option<std::path::PathBuf> {
+    if dot_git.is_dir() {
+        return Some(dot_git.to_path_buf());
+    }
+    let text = std::fs::read_to_string(dot_git).ok()?;
+    let path = std::path::Path::new(text.trim().strip_prefix("gitdir:")?.trim());
+    Some(if path.is_absolute() { path.to_path_buf() } else { dot_git.parent()?.join(path) })
+}
+
+/// (repo, branch) of the checkout at or above `dir`; None for a detached head
+/// or another host. A worktree or a submodule (`.git` is a file) is followed.
 fn git_branch_of(dir: &str) -> Option<(String, String)> {
     let mut at = std::path::Path::new(dir);
-    while !at.join(".git").is_dir() {
+    while !at.join(".git").exists() {
         at = at.parent()?;
     }
-    let git = at.join(".git");
+    let git = git_dir(&at.join(".git"))?;
     let head = std::fs::read_to_string(git.join("HEAD")).ok()?;
     let branch = head.trim().strip_prefix("ref: refs/heads/")?;
     // The branch goes into a query: plain name characters only.

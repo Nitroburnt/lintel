@@ -4,6 +4,35 @@ All notable changes to Lintel are written in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-11-21
+
+A feature and stability update focusing on healthier work habits, system integration, display management, and performance.
+
+### Breaks & ergonomics
+
+- Full-screen break overlay with smooth fade animations and custom break reminders.
+- Usage statistics and break adherence tracking to monitor screen time and posture pauses. All statistics remain strictly on-device: data is stored locally, gathered only when the Breaks feature is turned on, and window-title collection is strictly opt-in. In accordance with Lintel's no-telemetry policy, no analytics or telemetry leave your machine.
+- Interactive break prompts with flexible confirmation or snooze/skip choices, accompanied by gentle audio cues.
+- Intelligent idle-time detection so inactive periods do not trigger unwarranted break alerts.
+
+### Displays & Keep-Awake
+
+- Dedicated system tray icon displaying real-time Keep-Awake status and quick display controls.
+- Enhanced display management with per-display resolution, refresh rate awareness, and multi-monitor layout handling.
+- Robust power assertions preventing system sleep during active agent runs or critical tasks.
+
+### Clipboard & Utilities
+
+- Automatic tracking parameter stripping from copied URLs across popular web services.
+- Enhanced clipboard history with search filtering, item pinning, and improved persistence.
+
+### Performance & Stability
+
+- Improved WebView2 memory management and graceful recovery after webview process termination.
+- Enhanced live audio session monitoring and responsive volume meters.
+- Refined UI element alignment in the island extras and settings panels.
+- Updated translations and localization additions across supported languages.
+
 ## [2.0.0] - 2026-10-20
 
 A large release: about ninety additions and fixes, many of them ideas from the projects Lintel grew from, rebuilt for Windows. New options are off until you turn them on.
@@ -117,5 +146,7 @@ The first public release, and the first under the name Lintel. Earlier builds we
 - An installer for one user, without administrator rights. It is not code-signed.
 - At the first start, settings, data and saved keys of the code-named build are copied over once. The old install is left as it is. Agents are connected again from Settings.
 
+[2.1.0]: ../../releases/tag/v2.1.0
+[2.0.0]: ../../releases/tag/v2.0.0
 [1.0.1]: ../../releases/tag/v1.0.1
 [1.0.0]: ../../releases/tag/v1.0.0

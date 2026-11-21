@@ -178,6 +178,16 @@ pub enum Monitor {
     Primary,
 }
 
+/// Where a window goes instead of centred on its `monitor`, in physical pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Anchor {
+    /// The window's bottom-right corner sits here.
+    Corner(i32, i32),
+    /// The window's bottom edge sits at `y`, centred on `x`, and kept inside the screen that
+    /// holds the point: a panel over a tray icon, whose width is only known once it is built.
+    Centred(i32, i32),
+}
+
 /// One feature window. Every window loads `window.html?feature=<feature>&page=<page>`,
 /// which mounts `windows[page]` of the feature's TypeScript module.
 #[derive(Debug, Clone, Default)]
@@ -198,6 +208,9 @@ pub struct WindowSpec {
     pub exclude_from_capture: bool,
     pub transparent: bool,
     pub monitor: Monitor,
+    /// Instead of centred on `monitor`: where the window sits, in physical pixels (a panel
+    /// above a tray icon, say).
+    pub anchor: Option<Anchor>,
 }
 
 pub struct WindowFactory<'a> {

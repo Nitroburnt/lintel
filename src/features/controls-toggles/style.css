@@ -3,6 +3,10 @@
 .f-controls-toggles-page [hidden], .f-controls-toggles-pad [hidden] { display: none !important; }
 .f-controls-toggles-slide { display: flex; align-items: center; gap: var(--s-3); }
 .f-controls-toggles-slide .meter { flex: 1; }
+/* The two level bars: the pointer over the row grows the bar a little, so that it reads as the
+   wheel's target. A drag keeps its own size; components.css zeroes the duration when motion is
+   reduced. */
+.f-controls-toggles-slide:hover .meter:not(.dragging):not(.is-active) { transform: scaleY(1.45) scaleX(1.02); }
 .f-controls-toggles-ico { display: grid; place-items: center; width: 28px; color: var(--dim); }
 .f-controls-toggles-rail {
   /* Spaced like the gallery: the columns share what the scrollbar leaves, so nothing is cut at the sides. */

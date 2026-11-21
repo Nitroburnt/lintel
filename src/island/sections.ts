@@ -62,20 +62,74 @@ const HOME = own("home", N_("Dashboard"), "M4 5h16v6H4zM4 14h7v5H4zM14 14h6v5h-6
 /** Every tool the running features offer as a shortcut, as a list (src/island/utilities.ts). */
 const UTILITIES = own("utilities", N_("Utilities"), "M14.5 6.5a4 4 0 0 0-5 5L4 17v3h3l5.5-5.5a4 4 0 0 0 5-5l-2.5 2.5-2-2z", "d", 280);
 
-/** The header holds this many sections. debt: the same number as HEADER_SECTIONS in src/views/views.ts. */
+/** How many section tabs the header holds at most (Settings › Island lets the user pick that many). */
+export const MAX_TABS = 10;
+/** The header held this many sections before the user could choose (Settings › Island, `islandTabs`). */
 const HEADER_SECTIONS = 7;
-/** The sections that are tabs of the header. */
-export const headerKeys = (): string[] => sections().slice(0, HEADER_SECTIONS).map((s) => s.key);
 
-/** Every section of the features that are on, and the island's own, in the default order. */
-export function sections(): Section[] {
+/**
+ * The sections that are tabs of the header: the user's own list, in its order,
+ * without the sections that are not there right now (a feature that is off),
+ * and never more than MAX_TABS — a hand-edited list longer than the settings
+ * page allows is clamped here, so the header cannot overflow. No list: the
+ * first few in the order above. The section that is open is added by the header
+ * itself when the user left it out (src/views/views.ts).
+ */
+export const headerKeys = (tabs: string[] | null = State.settings.islandTabs): string[] =>
+  tabs
+    ? sections(tabs).filter((s) => tabs.includes(s.key)).slice(0, MAX_TABS).map((s) => s.key)
+    : sections().slice(0, HEADER_SECTIONS).map((s) => s.key);
+
+/**
+ * The user's tab list with `key` moved to `to`'s place: `to` is the tab it was
+ * dropped on (a drag in the header), or the tab beside it (Ctrl+Shift+← / →).
+ * `key` may be the open section shown on top of a list that does not hold it: it
+ * then joins the list, and a full list lets its last tab go. Null when nothing
+ * moves.
+ */
+export function moveTab(tabs: string[] | null, key: string, to: string): string[] | null {
+  if (key === to) return null;
+  const base = [...(tabs ?? headerKeys(null))];
+  const target = base.indexOf(to);
+  if (target < 0) return null;
+  const from = base.indexOf(key);
+  if (from >= 0) base.splice(from, 1);
+  else if (base.length >= MAX_TABS) base.pop();
+  base.splice(Math.min(target, base.length), 0, key);
+  return base;
+}
+
+/** `key` one place along the header (Ctrl+Shift+← / →), as a drop on its neighbour there. Null at the row's end. */
+export function stepTab(tabs: string[] | null, key: string, delta: 1 | -1): string[] | null {
+  const row = headerKeys(tabs);
+  const at = row.indexOf(key);
+  const to = row[at + delta];
+  return at < 0 || !to ? null : moveTab(tabs, key, to);
+}
+
+/**
+ * Every section of the features that are on, and the island's own. The ones the
+ * user chose as tabs come first, in their order; the rest follow in the default
+ * order, so the gallery and Ctrl+Tab use the same order.
+ */
+export function sections(tabs: string[] | null = State.settings.islandTabs): Section[] {
+  const chosen = tabs ?? [];
   return [
     ...(State.settings.homeCards === "off" ? [] : [HOME]),
     UTILITIES,
     ...FEATURES.filter((f) => featureOn(f.id)).flatMap((f) =>
       (f.sections ?? []).map((def) => ({ key: surfaceKey(f.id, def.id), feature: f.id, def })),
     ),
-  ].sort((a, b) => rank(a.key) - rank(b.key)); // stable: equal ranks keep the order they were found in
+  ].sort((a, b) => {
+    const ia = chosen.indexOf(a.key);
+    const ib = chosen.indexOf(b.key);
+    if (ia !== ib) {
+      if (ia < 0) return 1;
+      if (ib < 0) return -1;
+      return ia - ib;
+    }
+    return rank(a.key) - rank(b.key); // stable: equal ranks keep the order they were found in
+  });
 }
 
 /** Every live activity of the features that are on. */

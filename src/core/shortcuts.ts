@@ -38,6 +38,7 @@ export const SHORTCUT_TEXT = {
     newChat: N_("Start a new chat"),
     settings: N_("Open Settings"),
     pin: N_("Keep the island open"),
+    moveTab: N_("Move the open tab left or right"),
     close: N_("Close the island"),
   },
 } as const;
@@ -361,6 +362,7 @@ export const ISLAND_SHORTCUTS: readonly { keys: string; description: string }[] 
   { keys: "Ctrl+K", description: SHORTCUT_TEXT.island.newChat },
   { keys: "Ctrl+,", description: SHORTCUT_TEXT.island.settings },
   { keys: "Ctrl+P", description: SHORTCUT_TEXT.island.pin },
+  { keys: "Ctrl+Shift+← / Ctrl+Shift+→", description: SHORTCUT_TEXT.island.moveTab },
   { keys: "Esc", description: SHORTCUT_TEXT.island.close },
 ];
 

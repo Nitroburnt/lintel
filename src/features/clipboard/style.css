@@ -30,26 +30,35 @@
 .f-clipboard-row > .kbd { flex: none; }
 .f-clipboard-mono { font: 400 var(--t-sm) var(--mono); }
 
-/* Left end: the program's icon, the kind, or the picture itself. */
-.f-clipboard-mark {
+/* Left end: the program's icon, the kind, or the picture itself. A box of its own
+   size: the list item's generic `span` rule (`flex: 1`) outranks a two-class
+   selector, so it is named through its list to keep it from growing. */
+.f-clipboard-rows .f-clipboard-row > .f-clipboard-mark {
   display: grid;
   place-items: center;
   flex: none;
-  width: 22px;
-  height: 22px;
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  padding: 1px;
   overflow: hidden;
   border-radius: var(--r-xs);
   color: var(--dim);
 }
-.f-clipboard-mark > img { width: 18px; height: 18px; object-fit: contain; pointer-events: none; -webkit-user-drag: none; }
+.f-clipboard-mark > img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; -webkit-user-drag: none; }
 .f-clipboard-mark.f-clipboard-picture { background-color: var(--card); box-shadow: inset 0 0 0 1px var(--hairline); }
-.f-clipboard-mark.f-clipboard-picture > img { width: 100%; height: 100%; object-fit: cover; }
+.f-clipboard-mark.f-clipboard-picture { border-radius: var(--r-xs); }
+.f-clipboard-mark.f-clipboard-picture > img { object-fit: cover; }
 
-.f-clipboard-pin { display: grid; flex: none; color: var(--accent); }
+/* The pin marker shows a pinned entry: solid, where the button's is hollow until pinned. */
+.f-clipboard-rows .f-clipboard-row > .f-clipboard-pin { display: grid; flex: none; color: var(--accent); }
+.f-clipboard-rows .f-clipboard-row > .f-clipboard-pin > svg path { fill: currentColor; }
+.f-clipboard-pin-on > svg path { fill: currentColor; }
 
 /* Copy, pin, delete: in place of the time while the pointer is on the row. */
-.f-clipboard-acts { display: none; flex: none; gap: 2px; }
+.f-clipboard-rows .f-clipboard-row > .f-clipboard-acts { display: none; flex: none; gap: 2px; }
 .f-clipboard-acts > .btn { width: 24px; height: 24px; min-height: 24px; }
+.f-clipboard-acts > .f-clipboard-pin-on { color: var(--accent); }
 .f-clipboard-row:is(:hover, :focus-within) > .f-clipboard-acts { display: flex; }
 .f-clipboard-row:is(:hover, :focus-within) > :is(small, .kbd) { display: none; }
 
@@ -64,6 +73,55 @@
   color: var(--dim);
   font: 400 var(--t-md) var(--font);
 }
+
+/* The hover preview: the row's whole text, or its picture, beside or over the list.
+   A picture's panel takes no pointer, so the row it describes stays hovered; a
+   text's does, so its text is selected and its scrollbar dragged. */
+.f-clipboard-preview {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  max-width: min(420px, calc(100vw - 8px));
+  max-height: calc(100vh - 8px);
+  padding: var(--s-3);
+  overflow: hidden;
+  border-radius: var(--r-md);
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--outline), var(--shadow-win);
+  color: var(--ink);
+  pointer-events: none;
+  user-select: none;
+}
+.f-clipboard-preview.f-clipboard-preview-textual { pointer-events: auto; cursor: default; }
+.f-clipboard-preview-head { display: flex; flex: none; align-items: center; gap: var(--s-2); color: var(--dim); font: 400 var(--t-xs) var(--font); }
+.f-clipboard-preview-head > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* There only while a part of the text is selected: its box stays, so the head never jumps. */
+.f-clipboard-preview-copy { flex: none; visibility: hidden; width: 20px; height: 20px; min-height: 20px; margin-left: auto; }
+.f-clipboard-preview-copy.on { visibility: visible; }
+.f-clipboard-preview-body { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+/* Long text scrolls in the panel's own height, with a thin bar on the right, and is
+   the one place in the island a drag selects rather than moves something. */
+.f-clipboard-preview-text {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 260px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--card-2) transparent;
+  font: 400 var(--t-sm) var(--font);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  cursor: text;
+}
+.f-clipboard-preview-text.f-clipboard-mono { font: 400 var(--t-sm) var(--mono); }
+.f-clipboard-preview-more { flex: none; color: var(--dim-2); font: 400 var(--t-xs) var(--font); }
+/* The picture's box: script gives it the picture's shape, 260 × 160 at most. */
+.f-clipboard-preview-pic { display: grid; place-items: center; width: 260px; height: 160px; overflow: hidden; color: var(--dim-2); }
+.f-clipboard-preview-pic > img { display: block; width: 100%; height: 100%; object-fit: contain; }
 
 /* Settings: what the link cleaner made of the link that was tried. */
 .f-clipboard-tried { display: grid; gap: var(--s-1); padding-bottom: var(--s-2); }

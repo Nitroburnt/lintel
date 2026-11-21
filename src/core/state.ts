@@ -138,6 +138,12 @@ export interface Settings {
   hoverEnlarge: boolean;
   /** The cards of the Dashboard: both, the player and the agents, the levels and the next event, or no Dashboard. */
   homeCards: "both" | "now" | "levels" | "off";
+  /**
+   * The sections that are tabs of the open island's header, in the user's
+   * order (Settings › Island, "Tabs in the island"). Null: the shipped first
+   * seven. Empty: no section tabs at all (Home, Chat and Drop stay).
+   */
+  islandTabs: string[] | null;
   /** "The small island stays": for a moment, while an agent session works or waits, or until the user puts it away. */
   peekStay: "moment" | "agent" | "always";
   absenceInterval: number;
@@ -151,6 +157,8 @@ export interface Settings {
   islandDrag: boolean;
   /** Where the island was dragged to; null is the top centre of the chosen display. */
   islandSpot: import("../island/place").Spot | null;
+  /** The settings window's sidebar, in px: dragged with the grip, 160 to 360. Absent: 200. */
+  sidebarWidth?: number;
   autostart: boolean;
   hooksInstalled: boolean;
   /** Another session's finish or error opens its card for a moment (off: a badge only). */
@@ -211,6 +219,7 @@ export const DEFAULT_SETTINGS: Settings = {
   openOn: "",
   hoverEnlarge: false,
   homeCards: "both",
+  islandTabs: null,
   peekStay: "moment",
   absenceInterval: 180,
   activeIntegrations: [
@@ -220,6 +229,7 @@ export const DEFAULT_SETTINGS: Settings = {
   screen: "primary",
   islandDrag: true,
   islandSpot: null,
+  sidebarWidth: 200,
   autostart: false,
   hooksInstalled: false,
   peekFinished: false,
@@ -472,6 +482,22 @@ class AppState {
     return id === d.mainPill || d.activeIntegrations.includes(id);
   }
 
+  /** A pill back to its catalog state: nothing of the session is left on it. */
+  private resetTask(t: AgentTask) {
+    t.state = "idle";
+    t.steps = [];
+    t.stepIndex = 0;
+    delete t.stepSeq;
+    t.pillBadge = null;
+    t.finalLine = null;
+    t.finalText = null;
+    t.sessionId = null;
+    t.lastTool = t.model = t.mode = t.effort = null;
+    const def = pillDefinition(t.id);
+    if (def) t.name = def.name;
+    this.clearSessionDiffs(t.id);
+  }
+
   /**
    * Loads the catalog pills: the main pill always, the declared ones, and none
    * of the others — a pill that is mid-session stays until its session ends.
@@ -487,6 +513,17 @@ class AppState {
       if (shouldLoad && idx < 0) this.tasks.push(taskFor(def, this.settings.pillColors));
       const busy = idx >= 0 && (this.tasks[idx].state !== "idle" || this.tasks[idx].steps.length > 0);
       if (!shouldLoad && idx >= 0 && !busy) this.tasks.splice(idx, 1);
+    }
+    // A pill whose feature was switched off mid-session: no event ends that
+    // session now, so nothing may keep its pill working or its steps on screen.
+    for (const task of [...this.tasks]) {
+      if (this.pillAllowed(task.id)) continue;
+      if (!this.isKept(task.id)) {
+        this.tasks.splice(this.tasks.indexOf(task), 1);
+        this.clearSessionDiffs(task.id);
+        continue;
+      }
+      this.resetTask(task);
     }
     // A colour picked in Settings reaches the pills that are already up.
     for (const t of this.tasks) {
@@ -506,19 +543,7 @@ class AppState {
     const idx = this.tasks.findIndex((t) => t.id === id);
     if (idx < 0) return;
     if (this.isKept(id)) {
-      const t = this.tasks[idx];
-      t.state = "idle";
-      t.steps = [];
-      t.stepIndex = 0;
-      delete t.stepSeq;
-      t.pillBadge = null;
-      t.finalLine = null;
-      t.finalText = null;
-      t.sessionId = null;
-      t.lastTool = t.model = t.mode = t.effort = null;
-      const def = pillDefinition(id);
-      if (def) t.name = def.name;
-      this.clearSessionDiffs(id);
+      this.resetTask(this.tasks[idx]);
       this.notify();
       return;
     }

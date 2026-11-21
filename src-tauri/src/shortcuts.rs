@@ -342,6 +342,8 @@ pub fn apply(app: &AppHandle, stored: &Bindings) {
 
     let mut by_id = HashMap::new();
     let mut report = Vec::new();
+    let total = entries.len();
+    let mut held: Vec<String> = Vec::new();
     for (id, outcome) in entries {
         let status = match outcome {
             Err(status) => status,
@@ -356,7 +358,7 @@ pub fn apply(app: &AppHandle, stored: &Bindings) {
                         Status::Active
                     }
                     Some(Err(err)) => {
-                        crate::log::line(format!("shortcuts: {id} not registered: {err}"));
+                        held.push(format!("{id}: {err}"));
                         Status::InUse
                     }
                     None => Status::Off,
@@ -368,6 +370,11 @@ pub fn apply(app: &AppHandle, stored: &Bindings) {
     }
 
     if let Some(registry) = app.try_state::<Registry>() {
+        // One line per registration, not one per key: while another app holds
+        // these keys the same conflict would be written at every apply.
+        if !held.is_empty() {
+            crate::log::line(format!("shortcuts: {} of {total} already held: {}", held.len(), held.join(", ")));
+        }
         *registry.by_id.lock().unwrap() = by_id;
         *registry.report.lock().unwrap() = report;
     }

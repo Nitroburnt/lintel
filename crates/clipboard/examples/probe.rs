@@ -9,9 +9,10 @@
 // Two modes, because of Windows' own clipboard history (Win+V, 25 entries):
 //
 //   default      every test copy carries the marks that keep it out of every
-//                clipboard history, Windows' included. Shows: the rules for
-//                links and secrets, the listener, that marked copies are
-//                skipped, and that the user's clipboard comes back unchanged.
+//                clipboard history, Windows' included. The app does not look at
+//                those marks: they are recorded like any other copy. Shows the
+//                link rules, the listener, and that the user's clipboard comes
+//                back unchanged.
 //   --unmarked   also makes ordinary copies (a text, a tracking link, a
 //                picture…), which is the only way to show "recorded" and
 //                "cleaned" end to end. Each of those ALSO lands in the user's
@@ -79,7 +80,7 @@ impl Probe {
 fn main() {
     let unmarked = std::env::args().any(|a| a == "--unmarked");
     urls::self_check();
-    println!("ok   link cleaning and secret rules: 13 checks");
+    println!("ok   link cleaning rules: 8 checks");
 
     // ── What the user has: saved, never shown ───────────────────────────────────
     let held = match clip::open() {
@@ -115,25 +116,24 @@ fn main() {
     let ev = events();
     p.check("listener started; what was already on the clipboard is not recorded", ev.is_empty() && history.entries().is_empty(), format!("{} entries", history.entries().len()));
 
-    // ── Copies their source marked: never recorded (and kept out of Win+V by Windows itself) ──
+    // ── Copies their source marked: recorded like any other (the marks still keep them out of Win+V) ──
     let wide = |s: &str| s.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect::<Vec<u8>>();
     let link = "https://example.com/watch?v=1&utm_source=probe&fbclid=abc#t";
-    let tests: [(&str, Box<dyn Fn(&clip::Open) -> Result<(), String>>); 2] = [
-        ("text with all three marks", Box::new(|c| c.set_text("clipboard-probe: marked text"))),
-        ("a tracking link with all three marks: neither recorded nor rewritten", Box::new(move |c| c.set_text(link))),
+    let tests: [(&str, &str, Box<dyn Fn(&clip::Open) -> Result<(), String>>); 2] = [
+        ("text with all three marks", "text", Box::new(|c| c.set_text("clipboard-probe: marked text"))),
+        ("a tracking link with all three marks, not rewritten", "link", Box::new(move |c| c.set_text(link))),
     ];
-    for (name, fill) in &tests {
+    for (n, (name, kind, fill)) in tests.iter().enumerate() {
         if !p.put(true, |c| fill(c)) {
             p.check(name, false, "somebody else copied meanwhile; stopping".into());
             break;
         }
         let ev = events();
-        let skipped = had(&ev, "skipped");
-        let untouched = clip::open().ok().and_then(|c| c.text(1 << 16)).is_some_and(|t| t.starts_with("clipboard-probe") || t == link);
+        let got = had(&ev, "captured");
         p.check(
             name,
-            skipped.as_ref().is_some_and(|s| s["secret"] == true) && had(&ev, "captured").is_none() && had(&ev, "cleaned").is_none() && untouched && history.entries().is_empty(),
-            format!("decision={}, entries={}, clipboard left as copied={untouched}", skipped.map_or("none".into(), |s| s["why"].to_string()), history.entries().len()),
+            got.as_ref().is_some_and(|c| c["kind"] == *kind) && had(&ev, "skipped").is_none() && history.entries().len() == n + 1,
+            format!("recorded as {}, entries={}", got.map_or("none".into(), |g| g["kind"].to_string()), history.entries().len()),
         );
     }
     // CanIncludeInClipboardHistory=0 on its own, without the Exclude format: Windows' history honours
@@ -143,14 +143,12 @@ fn main() {
     if p.alone() && clip::open().and_then(|c| no_history(&c)).is_ok() {
         p.last = clip::sequence();
         let ev = events();
-        let formats = had(&ev, "skipped").map(|s| s["formats"].to_string()).unwrap_or_default();
         p.check(
             "CanIncludeInClipboardHistory=0 alone",
-            had(&ev, "skipped").is_some_and(|s| s["secret"] == true) && !formats.contains("Exclude") && history.entries().is_empty(),
-            format!("skipped; formats on that copy: {formats}"),
+            had(&ev, "captured").is_some_and(|c| c["kind"] == "text") && history.entries().len() == 3,
+            format!("recorded; entries={}", history.entries().len()),
         );
     }
-    p.check("copies left out as secret, counted for the page", history.skipped() == 3, format!("{}", history.skipped()));
 
     // Paused: nothing is read at all.
     PAUSED.store(true, Ordering::SeqCst);
@@ -165,12 +163,12 @@ fn main() {
         println!("--unmarked: the next copies also enter Windows' own clipboard history if it is on");
         if p.put(false, |c| c.set_text("clipboard-probe: no cloud").and_then(|_| c.set(clip::format(clip::NO_CLOUD), &[0; 4]))) {
             let ev = events();
-            p.check("CanUploadToCloudClipboard=0 alone", had(&ev, "skipped").is_some_and(|s| s["secret"] == true) && history.entries().is_empty(), "skipped".into());
+            p.check("CanUploadToCloudClipboard=0 alone", had(&ev, "captured").is_some_and(|c| c["kind"] == "text") && history.entries().len() == 4, format!("recorded; entries={}", history.entries().len()));
         }
         if p.put(false, |c| c.set_text("clipboard-probe: plain text")) {
             let ev = events();
             let got = had(&ev, "captured");
-            p.check("plain text", got.as_ref().is_some_and(|c| c["kind"] == "text" && c["chars"] == 27) && history.entries().len() == 1, format!("{}", got.unwrap_or_default()));
+            p.check("plain text", got.as_ref().is_some_and(|c| c["kind"] == "text" && c["chars"] == 27) && history.entries().len() == 5, format!("{}", got.unwrap_or_default()));
         }
         if p.put(false, |c| c.set_text(link).and_then(|_| c.set(clip::format("UniformResourceLocatorW"), &wide(link)))) {
             let ev = events();
@@ -184,12 +182,12 @@ fn main() {
         }
         if p.put(false, |c| c.set_text("ghp_Xk9mP2vL7qR4wT6zN8aB3cD5eF1gH0")) {
             let ev = events();
-            p.check("a text that looks like a key", had(&ev, "skipped").is_some_and(|s| s["secret"] == true) && history.entries().len() == 2, "skipped".into());
+            p.check("a text that looks like a key", had(&ev, "captured").is_some_and(|c| c["kind"] == "text") && history.entries().len() == 7, format!("recorded; entries={}", history.entries().len()));
         }
         if p.put(false, |c| c.set_text("clipboard-probe: plain text")) {
             let _ = events();
             let all = history.entries();
-            p.check("the same text copied again", all.len() == 2 && all[0].kind() == Kind::Text, format!("{} entries, the text is first again", all.len()));
+            p.check("the same text copied again", all.len() == 7 && all[0].kind() == Kind::Text, format!("{} entries, the text is first again", all.len()));
         }
         // A 2×2 bitmap, as a screenshot tool gives it.
         let mut dib = Vec::new();
